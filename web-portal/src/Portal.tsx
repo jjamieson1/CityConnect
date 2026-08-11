@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link, Navigate, Route, Routes, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
@@ -24,6 +24,12 @@ export default function Portal() {
   });
 
   const signedIn = !!profile.data && !profile.isError;
+
+  // Once signed in, reset the silent-SSO guard so a later sign-out can probe
+  // again on the next visit.
+  useEffect(() => {
+    if (signedIn) sessionStorage.removeItem(SILENT_SSO_TRIED);
+  }, [signedIn]);
 
   return (
     <div className="min-h-screen" style={{ background: "var(--surface-0)" }}>
@@ -92,8 +98,35 @@ async function signOut() {
   window.location.href = endSessionUrl ?? import.meta.env.BASE_URL;
 }
 
+// Per-tab, one-shot guard so a silent SSO that finds no C2 session cannot loop.
+const SILENT_SSO_TRIED = "cc.portalSilentSsoTried";
+
 /** SignInPrompt is shown wherever an action needs an identity. */
 function SignInPrompt({ what }: { what: string }) {
+  // The resident may already hold a live C2 session. Try a silent (prompt=none)
+  // SSO once per tab before asking them to click — a signed-in resident is
+  // carried straight through with no screen. If C2 has no session it answers
+  // login_required and the callback returns here, where the button shows.
+  const [probing] = useState(() => !sessionStorage.getItem(SILENT_SSO_TRIED));
+  useEffect(() => {
+    if (!sessionStorage.getItem(SILENT_SSO_TRIED)) {
+      sessionStorage.setItem(SILENT_SSO_TRIED, "1");
+      // Full-page navigation: the authorization flow is a browser redirect
+      // through C2 and back. replace() keeps it out of history.
+      window.location.replace(
+        portalApi.loginUrl(location.pathname + location.search, { silent: true }),
+      );
+    }
+  }, []);
+
+  if (probing) {
+    return (
+      <div className="cc-card p-6 text-center">
+        <Spinner label="Signing you in" />
+      </div>
+    );
+  }
+
   return (
     <div className="cc-card p-6 text-center">
       <h2 className="text-lg font-semibold">Sign in to {what}</h2>
@@ -105,7 +138,7 @@ function SignInPrompt({ what }: { what: string }) {
         variant="primary"
         className="mt-4"
         onClick={() => {
-          window.location.href = portalApi.loginUrl(location.pathname);
+          window.location.href = portalApi.loginUrl(location.pathname + location.search);
         }}
       >
         Sign in

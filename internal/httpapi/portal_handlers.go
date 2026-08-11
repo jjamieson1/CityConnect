@@ -80,7 +80,7 @@ func (s *Server) requireCitizen(next http.Handler) http.Handler {
 }
 
 func (s *Server) handlePortalLogin(w http.ResponseWriter, r *http.Request) {
-	url, err := s.Portal.StartLogin(r.Context(), r.URL.Query().Get("returnTo"))
+	url, err := s.Portal.StartLogin(r.Context(), r.URL.Query().Get("returnTo"), queryBool(r, "silent"))
 	if err != nil {
 		s.log.ErrorContext(r.Context(), "could not start portal sign-in", "error", err)
 		writeProblem(w, r, http.StatusServiceUnavailable, "c2_unavailable",

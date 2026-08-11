@@ -48,24 +48,42 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 // handleCallback completes the authorization-code exchange.
 func (s *Server) handleCallback(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
+	state := q.Get("state")
 
 	// C2 reports failures as a redirect parameter rather than a status code.
+	// Route the failure to whichever surface began the flow, so a citizen is
+	// never dumped onto the staff sign-in page and vice versa.
 	if errCode := q.Get("error"); errCode != "" {
+		aud, returnTo := s.peekLoginFlow(r, state)
+		citizen := aud == domain.AudienceCitizen
 		// login_required / interaction_required are the expected answers to a
 		// silent prompt=none probe: the visitor simply has no live C2 session.
-		// Land them on the clean sign-in page with no error banner — this is a
-		// normal "please sign in", not a fault.
+		// Land them on a clean surface with no error banner — this is a normal
+		// "please sign in", not a fault. For the portal that is the page they
+		// came from (its inline sign-in prompt then shows); for the console it
+		// is the sign-in page.
 		if errCode == "login_required" || errCode == "interaction_required" {
-			s.redirectToApp(w, r, "/login")
+			if citizen {
+				if returnTo == "" {
+					returnTo = "/"
+				}
+				s.redirectToApp(w, r, returnTo)
+			} else {
+				s.redirectToApp(w, r, "/login")
+			}
 			return
 		}
 		s.log.WarnContext(r.Context(), "C2 returned an authorization error",
 			"error", errCode, "description", q.Get("error_description"))
-		s.redirectToApp(w, r, "/login?reason="+errCode)
+		if citizen {
+			s.redirectToApp(w, r, "/?reason="+errCode)
+		} else {
+			s.redirectToApp(w, r, "/login?reason="+errCode)
+		}
 		return
 	}
 
-	code, state := q.Get("code"), q.Get("state")
+	code := q.Get("code")
 	if code == "" || state == "" {
 		writeProblem(w, r, http.StatusBadRequest, "invalid_callback",
 			"The sign-in response was missing its code or state.")
@@ -121,6 +139,24 @@ func (s *Server) audienceForState(r *http.Request, state string) string {
 		return domain.AudienceStaff
 	}
 	return flow.Audience
+}
+
+// peekLoginFlow reads a pending flow's audience and returnTo without consuming
+// it — the completing service deletes it, so state stays single-use. It is used
+// on the error path, where no service runs to consume the flow. Defaults to the
+// staff surface when the flow is unknown.
+func (s *Server) peekLoginFlow(r *http.Request, state string) (audience, returnTo string) {
+	var flow domain.LoginFlow
+	err := s.DB.WithContext(r.Context()).
+		Select("audience", "return_to").Where("state = ?", state).First(&flow).Error
+	if err != nil {
+		return domain.AudienceStaff, ""
+	}
+	aud := flow.Audience
+	if aud == "" {
+		aud = domain.AudienceStaff
+	}
+	return aud, flow.ReturnTo
 }
 
 // completePortalLogin finishes a citizen sign-in that arrived on the shared

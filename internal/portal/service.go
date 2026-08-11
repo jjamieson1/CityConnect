@@ -78,7 +78,11 @@ func NewService(
 // ---------------------------------------------------------------------------
 
 // StartLogin begins an authorization-code flow for the portal.
-func (s *Service) StartLogin(ctx context.Context, returnTo string) (string, error) {
+//
+// Pass silent=true for a prompt=none probe: a resident who already holds a live
+// C2 session is signed in without any UI, and C2 answers login_required instead
+// of prompting when they do not.
+func (s *Service) StartLogin(ctx context.Context, returnTo string, silent bool) (string, error) {
 	// A single-origin deployment has no separate portal callback; the shared
 	// one dispatches by audience, so fall back to it rather than sending an
 	// empty redirect_uri that C2 would reject.
@@ -87,7 +91,7 @@ func (s *Service) StartLogin(ctx context.Context, returnTo string) (string, erro
 		redirect = s.cfg.C2.RedirectURL
 	}
 
-	req, err := s.oidc.AuthorizeFor(ctx, redirect, false)
+	req, err := s.oidc.AuthorizeFor(ctx, redirect, silent)
 	if err != nil {
 		return "", err
 	}
@@ -96,6 +100,7 @@ func (s *Service) StartLogin(ctx context.Context, returnTo string) (string, erro
 		State: req.State, Nonce: req.Nonce, CodeVerifier: req.CodeVerifier,
 		ReturnTo:    sanitizeReturnTo(returnTo),
 		Audience:    domain.AudienceCitizen,
+		Silent:      silent,
 		RedirectURL: req.RedirectURL,
 		ExpiresAt:   time.Now().UTC().Add(10 * time.Minute),
 	}

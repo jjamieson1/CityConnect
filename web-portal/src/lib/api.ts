@@ -67,8 +67,15 @@ export interface Listing<T> {
 }
 
 export const portalApi = {
-  loginUrl: (returnTo?: string) =>
-    `${BASE}/auth/login${returnTo ? `?returnTo=${encodeURIComponent(returnTo)}` : ""}`,
+  // Pass { silent: true } for the prompt=none probe that signs in a resident
+  // who already holds a live C2 session without showing any UI.
+  loginUrl: (returnTo?: string, opts: { silent?: boolean } = {}) => {
+    const params = new URLSearchParams();
+    if (returnTo) params.set("returnTo", returnTo);
+    if (opts.silent) params.set("silent", "true");
+    const qs = params.toString();
+    return `${BASE}/auth/login${qs ? `?${qs}` : ""}`;
+  },
   logout: () => call<{ status: string; endSessionUrl?: string }>("/auth/logout", { method: "POST" }),
   me: () => call<PortalProfile>("/me"),
 
