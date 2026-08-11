@@ -96,14 +96,21 @@ resolves to the real C2 first, and requests silently go there instead. The dev
 environment uses 5273 to sidestep this, and `doctor` warns when it sees 5173 in
 use.
 
-To develop against a real C2, register a client for CityConnect with redirect
-URI `http://127.0.0.1:5174/api/auth/callback`, then in `scripts/dev.env`:
+To develop against a real C2, register a client for CityConnect, then in
+`scripts/dev.env`:
 
 ```sh
 CC_DEV_C2_ORIGIN=http://localhost:5173
 CC_DEV_CLIENT_ID=<the registered client id>
 CC_DEV_CLIENT_SECRET=<its secret>
 ```
+
+`scripts/dev.sh doctor` prints the full set of values that client needs
+registered — both callback URIs, both post-logout URIs, and the back-channel
+logout URI (`http://127.0.0.1:4021/api/c2/backchannel-logout`, the API origin,
+called server-to-server). Miss the back-channel URI and sign-in still works,
+but C2 cannot end the session on sign-out — its logout screen shows the app's
+session will "expire on its own".
 
 The stub is then simply not started.
 

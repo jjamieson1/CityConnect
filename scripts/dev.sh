@@ -616,14 +616,19 @@ cmd_doctor() {
   if $USING_REAL_C2; then
     if curl -fsS --max-time 3 "${C2_ORIGIN}/oidc/.well-known/openid-configuration" >/dev/null 2>&1; then
       ok "real C2 at ${C2_ORIGIN} answers discovery"
-      hint "client_id ${CLIENT_ID} must be registered there with all four of"
-      hint "these. C2 matches every one exactly, and each surface needs its own —"
+      hint "client_id ${CLIENT_ID} must be registered there with all of these."
+      hint "C2 matches every one exactly, and each surface needs its own —"
       hint "sign-in and sign-out are registered separately, so one can work while"
       hint "the other fails."
       hint "  redirect_uri             ${WEB_URL}/api/auth/callback"
       hint "  redirect_uri             ${PORTAL_URL}/api/auth/callback"
       hint "  post_logout_redirect_uri ${WEB_URL}/"
       hint "  post_logout_redirect_uri ${PORTAL_URL}/"
+      hint "and the back-channel logout URI. Unlike the URIs above it is called"
+      hint "server-to-server, so it is the API origin — not a Vite dev port —"
+      hint "and one covers both surfaces. Without it, C2 cannot end this app's"
+      hint "session on sign-out; the logout screen shows 'expire on its own'."
+      hint "  backchannel_logout_uri   ${API_URL}/api/c2/backchannel-logout"
       hint "and the Service Card callout URL:"
       hint "  ${PORTAL_URL}/api/citizens/{sub}/status"
     else
