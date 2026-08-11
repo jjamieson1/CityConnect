@@ -1,0 +1,60 @@
+[Unit]
+Description=CityConnect API
+Documentation=https://github.com/jjamieson1/CityConnect
+After=network-online.target mariadb.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=cityconnect
+Group=cityconnect
+WorkingDirectory=/opt/cityconnect
+ExecStart=/opt/cityconnect/bin/cityconnect-api
+
+# Configuration and secrets live in a root-owned file readable only by the
+# service account. Nothing sensitive belongs in this unit.
+EnvironmentFile=/opt/cityconnect/cityconnect.env
+
+Restart=always
+RestartSec=5s
+# Give up restarting after repeated rapid failures, so a broken configuration
+# is visible in systemctl status rather than hidden by a restart loop.
+StartLimitIntervalSec=120
+StartLimitBurst=5
+
+# Draining the notification outbox and finishing in-flight requests takes a
+# moment; the API's own shutdown timeout is shorter than this.
+TimeoutStopSec=30
+KillSignal=SIGTERM
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=cityconnect-api
+
+# --- Hardening ---------------------------------------------------------------
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+
+# Attachments are the only path the service writes to.
+ReadWritePaths=/opt/cityconnect/data
+
+LimitNOFILE=8192
+
+[Install]
+WantedBy=multi-user.target

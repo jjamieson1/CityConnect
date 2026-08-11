@@ -1,0 +1,32 @@
+# Build output
+/bin/
+/dist/
+web/dist/
+web/node_modules/
+node_modules/
+
+# Runtime data — attachments live on disk and are backed up separately
+/data/
+*.db
+*.sqlite
+
+# Secrets. These must never be committed.
+deployment/deploy.env
+*.pem
+*.key
+*.p12
+*.jks
+.env
+.env.*
+!*.env.example
+
+# Local tooling
+.DS_Store
+*.log
+.idea/
+.vscode/
+coverage.out
+
+# Development environment state and local overrides
+.dev/
+scripts/dev.env

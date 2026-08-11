@@ -1,0 +1,196 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+ * Colour is defined once, as roles, so light and dark swap in one place and
+ * every component is written against the role rather than a raw hex.
+ *
+ * The categorical series slots are the validated eight-hue order: assigned in
+ * fixed order and never cycled, so a filter that removes a series never
+ * repaints the survivors. The dark column is the same hues re-stepped for the
+ * dark surface, not an automatic inversion.
+ */
+:root {
+  color-scheme: light;
+
+  --surface-0: #f4f4f2;
+  --surface-1: #fcfcfb;
+  --surface-2: #ffffff;
+  --text-primary: #0b0b0b;
+  --text-secondary: #52514e;
+  --text-muted: #7a7975;
+  --border: #e3e2de;
+  --border-strong: #c9c8c2;
+  --accent: #2a78d6;
+
+  --series-1: #2a78d6;
+  --series-2: #eb6834;
+  --series-3: #1baf7a;
+  --series-4: #eda100;
+  --series-5: #e87ba4;
+  --series-6: #008300;
+  --series-7: #4a3aa7;
+  --series-8: #e34948;
+
+  /* Status is reserved: never reused as a series colour, and always shipped
+     alongside a label so state is never carried by colour alone. */
+  --status-good: #1a7f4b;
+  --status-warning: #a86800;
+  --status-serious: #c2410c;
+  --status-critical: #b91c1c;
+
+  --status-good-bg: #e7f4ec;
+  --status-warning-bg: #fdf3e0;
+  --status-serious-bg: #fdeee5;
+  --status-critical-bg: #fdeaea;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+
+    --surface-0: #121211;
+    --surface-1: #1a1a19;
+    --surface-2: #232322;
+    --text-primary: #ffffff;
+    --text-secondary: #c3c2b7;
+    --text-muted: #8e8d85;
+    --border: #33332f;
+    --border-strong: #4a4a45;
+    --accent: #3987e5;
+
+    --series-1: #3987e5;
+    --series-2: #d95926;
+    --series-3: #199e70;
+    --series-4: #c98500;
+    --series-5: #d55181;
+    --series-6: #008300;
+    --series-7: #9085e9;
+    --series-8: #e66767;
+
+    --status-good: #4ade80;
+    --status-warning: #fbbf24;
+    --status-serious: #fb923c;
+    --status-critical: #f87171;
+
+    --status-good-bg: #14261c;
+    --status-warning-bg: #2a2113;
+    --status-serious-bg: #2b1c12;
+    --status-critical-bg: #2b1516;
+  }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --surface-0: #121211;
+  --surface-1: #1a1a19;
+  --surface-2: #232322;
+  --text-primary: #ffffff;
+  --text-secondary: #c3c2b7;
+  --text-muted: #8e8d85;
+  --border: #33332f;
+  --border-strong: #4a4a45;
+  --accent: #3987e5;
+
+  --series-1: #3987e5;
+  --series-2: #d95926;
+  --series-3: #199e70;
+  --series-4: #c98500;
+  --series-5: #d55181;
+  --series-6: #008300;
+  --series-7: #9085e9;
+  --series-8: #e66767;
+
+  --status-good: #4ade80;
+  --status-warning: #fbbf24;
+  --status-serious: #fb923c;
+  --status-critical: #f87171;
+
+  --status-good-bg: #14261c;
+  --status-warning-bg: #2a2113;
+  --status-serious-bg: #2b1c12;
+  --status-critical-bg: #2b1516;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--surface-0);
+  color: var(--text-primary);
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Focus is always visible: an agent working a queue lives on the keyboard. */
+:where(a, button, input, select, textarea, [tabindex]):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+
+@layer components {
+  .cc-card {
+    @apply rounded-lg border bg-[var(--surface-1)];
+    border-color: var(--border);
+  }
+
+  .cc-input {
+    @apply w-full rounded-md border bg-[var(--surface-2)] px-3 py-2 text-sm text-ink;
+    border-color: var(--border-strong);
+  }
+  .cc-input::placeholder {
+    color: var(--text-muted);
+  }
+
+  .cc-label {
+    @apply mb-1 block text-xs font-medium uppercase tracking-wide;
+    color: var(--text-secondary);
+  }
+
+  .cc-btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-md px-3 py-2 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50;
+  }
+  .cc-btn-primary {
+    background: var(--accent);
+    color: #fff;
+  }
+  .cc-btn-primary:hover:not(:disabled) {
+    filter: brightness(0.93);
+  }
+  .cc-btn-secondary {
+    @apply border;
+    border-color: var(--border-strong);
+    background: var(--surface-2);
+    color: var(--text-primary);
+  }
+  .cc-btn-secondary:hover:not(:disabled) {
+    background: var(--surface-0);
+  }
+  .cc-btn-danger {
+    background: var(--status-critical);
+    color: #fff;
+  }
+
+  .cc-table {
+    @apply w-full border-collapse text-sm;
+  }
+  .cc-table th {
+    @apply px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide;
+    color: var(--text-secondary);
+    border-bottom: 1px solid var(--border);
+  }
+  .cc-table td {
+    @apply px-3 py-2 align-top;
+    border-bottom: 1px solid var(--border);
+  }
+  .cc-table tbody tr:hover {
+    background: var(--surface-0);
+  }
+}

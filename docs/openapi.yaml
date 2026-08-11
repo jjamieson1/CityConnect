@@ -1,0 +1,731 @@
+openapi: 3.1.0
+
+info:
+  title: CityConnect API
+  version: "1.0.0"
+  description: |
+    Municipal CRM and service-request API.
+
+    Three kinds of caller reach this API, and they authenticate differently:
+
+    - **Staff** hold an HTTP-only session cookie, established by signing in
+      through C2 (`/auth/login` → C2 → `/auth/callback`). There is no local
+      account path.
+    - **Connected systems** present a `cc_pat_…` personal access token as a
+      bearer credential. A token can only ever narrow its owner's authority.
+    - **C2 itself** calls two endpoints server-to-server: the Service Card
+      callout (`/citizens/{sub}/status`, authenticated by a short-lived RS256
+      assertion) and back-channel logout (a signed `logout_token`).
+
+    Errors are `application/problem+json` and carry a stable `code` field.
+    Switch on that rather than on the prose.
+  contact:
+    name: CityConnect
+    url: https://github.com/jjamieson1/CityConnect
+
+servers:
+  - url: https://city.example.gov/cityconnect/api
+    description: Production
+  - url: http://localhost:4021/api
+    description: Local development
+
+tags:
+  - name: Auth
+    description: Staff sign-in and session handling
+  - name: C2
+    description: Endpoints C2 calls server-to-server
+  - name: Requests
+    description: Service requests and their lifecycle
+  - name: Contacts
+    description: Citizens and their identities
+  - name: Configuration
+    description: Catalogue, routing and organisation
+  - name: Reporting
+
+security:
+  - sessionCookie: []
+  - bearerToken: []
+
+paths:
+  # ---------------------------------------------------------------------------
+  /auth/login:
+    get:
+      tags: [Auth]
+      summary: Begin sign-in
+      security: []
+      description: |
+        Redirects the browser to C2's authorization endpoint with PKCE.
+
+        Deliberately sends neither `prompt=login` nor `max_age` — either one
+        makes C2 re-prompt for credentials on every visit even with an active
+        session, destroying SSO.
+      parameters:
+        - { name: returnTo, in: query, schema: { type: string }, description: "Path to return to; must be relative" }
+        - { name: silent, in: query, schema: { type: boolean }, description: "Send prompt=none for a background session check" }
+      responses:
+        "302": { description: Redirect to C2 }
+        "200":
+          description: The authorize URL, when the caller asked for JSON
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: { authorizeUrl: { type: string } }
+
+  /auth/callback:
+    get:
+      tags: [Auth]
+      summary: Complete sign-in
+      security: []
+      description: Validates state, exchanges the code, verifies the id_token, and sets the session cookie.
+      parameters:
+        - { name: code, in: query, schema: { type: string } }
+        - { name: state, in: query, schema: { type: string } }
+        - { name: error, in: query, schema: { type: string } }
+      responses:
+        "302": { description: Redirect into the console, or back to sign-in with a reason }
+
+  /auth/logout:
+    post:
+      tags: [Auth]
+      summary: Sign out
+      description: |
+        Ends the local session and returns C2's `end_session` URL. Both halves
+        matter: clearing only the local session leaves the C2 session alive, so
+        the user is silently signed straight back in.
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string }
+                  endSessionUrl: { type: string }
+
+  /auth/me:
+    get:
+      tags: [Auth]
+      summary: Current identity and capabilities
+      description: |
+        Returns the caller plus the permission list the console renders from,
+        so a permission change on the server reaches the UI without a front-end
+        release.
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Me" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  # ---------------------------------------------------------------------------
+  /citizens/{sub}/status:
+    get:
+      tags: [C2]
+      summary: Service Card callout
+      security:
+        - calloutAssertion: []
+      description: |
+        C2 calls this server-to-server when a citizen opens their Service Card,
+        and renders the returned JSON.
+
+        Constraints worth respecting: C2 allows about five seconds, does not
+        cache, calls on every render plus a refresh timer, and falls back to
+        static card content on any error — so a clean 4xx is better than a
+        malformed 200. An unknown subject returns `200 {}`, never a guess.
+      parameters:
+        - name: sub
+          in: path
+          required: true
+          schema: { type: string }
+          description: The citizen's opaque C2 subject identifier
+      responses:
+        "200":
+          description: The status bundle
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/StatusBundle" }
+        "401": { description: The assertion failed verification }
+        "503": { description: Temporarily unavailable; C2 shows the static card }
+
+  /c2/backchannel-logout:
+    post:
+      tags: [C2]
+      summary: Back-channel logout
+      security: []
+      description: |
+        C2 posts a signed `logout_token` when a user explicitly signs out.
+
+        The token is subject-based and carries no `sid`, so a single session
+        cannot be targeted — every session that subject holds is ended.
+      requestBody:
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required: [logout_token]
+              properties: { logout_token: { type: string } }
+      responses:
+        "200": { description: Sessions terminated }
+        "400": { description: The token failed validation }
+
+  /c2/jwks:
+    get:
+      tags: [C2]
+      summary: Our public signing keys
+      security: []
+      description: C2 fetches these to verify the client assertions on our notification calls.
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { type: object }
+
+  # ---------------------------------------------------------------------------
+  /requests:
+    get:
+      tags: [Requests]
+      summary: List service requests
+      parameters:
+        - { name: q, in: query, schema: { type: string } }
+        - { name: status, in: query, schema: { type: string }, description: "Comma-separated" }
+        - { name: priority, in: query, schema: { type: string } }
+        - { name: queueId, in: query, schema: { type: string } }
+        - { name: departmentId, in: query, schema: { type: string } }
+        - { name: assigneeUserId, in: query, schema: { type: string } }
+        - { name: contactId, in: query, schema: { type: string } }
+        - { name: openOnly, in: query, schema: { type: boolean } }
+        - { name: unassigned, in: query, schema: { type: boolean } }
+        - { name: breached, in: query, schema: { type: boolean } }
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Offset"
+        - $ref: "#/components/parameters/Sort"
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Page"
+                  - type: object
+                    properties:
+                      items:
+                        type: array
+                        items: { $ref: "#/components/schemas/ServiceRequest" }
+
+    post:
+      tags: [Requests]
+      summary: Create a service request
+      description: |
+        Validates the service type's intake form, applies routing rules,
+        computes SLA targets from a business calendar, and queues the
+        acknowledgement notification.
+
+        Partner clients should send an `Idempotency-Key`: integrations retry,
+        and a duplicate request is a duplicate work order for a crew.
+      parameters:
+        - { name: Idempotency-Key, in: header, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateRequest" }
+      responses:
+        "201":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ServiceRequest" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+
+  /requests/{id}:
+    parameters: [{ $ref: "#/components/parameters/Id" }]
+    get:
+      tags: [Requests]
+      summary: Get a request
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ServiceRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    patch:
+      tags: [Requests]
+      summary: Update a request
+      description: |
+        Send the `version` you read. A mismatch returns `409 stale_version`
+        rather than overwriting — two agents on one ticket is routine.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                subject: { type: string }
+                description: { type: string }
+                priority: { $ref: "#/components/schemas/Priority" }
+                version: { type: integer }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ServiceRequest" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /requests/{id}/transition:
+    parameters: [{ $ref: "#/components/parameters/Id" }]
+    post:
+      tags: [Requests]
+      summary: Change status
+      description: |
+        Moves the request through the state machine. Illegal moves are rejected
+        with `409 bad_transition`, never written — an unconstrained status
+        column makes every report about cycle time meaningless.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [to]
+              properties:
+                to: { $ref: "#/components/schemas/RequestStatus" }
+                note: { type: string }
+                resolutionCode: { type: string }
+                notifyCitizen: { type: boolean }
+                version: { type: integer }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ServiceRequest" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /requests/{id}/comments:
+    parameters: [{ $ref: "#/components/parameters/Id" }]
+    post:
+      tags: [Requests]
+      summary: Add a comment
+      description: |
+        A `citizen`-visible comment is what the Service Card renders as "what
+        has been done" and what a notification quotes. Visibility is an
+        explicit choice; the default is internal.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [body]
+              properties:
+                body: { type: string }
+                visibility: { type: string, enum: [internal, citizen] }
+                notifyCitizen: { type: boolean }
+      responses:
+        "201":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Comment" }
+
+  /requests/bulk:
+    post:
+      tags: [Requests]
+      summary: Apply an action to many requests
+      description: Returns `207` when any item failed, with per-item outcomes.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [requestIds, operation]
+              properties:
+                requestIds: { type: array, items: { type: string }, maxItems: 500 }
+                operation: { type: string, enum: [assign, transition, priority, queue, tag] }
+      responses:
+        "200": { description: Every item succeeded }
+        "207":
+          description: Partial success
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  succeeded: { type: array, items: { type: string } }
+                  failed: { type: object, additionalProperties: { type: string } }
+
+  # ---------------------------------------------------------------------------
+  /contacts:
+    get:
+      tags: [Contacts]
+      summary: List contacts
+      parameters:
+        - { name: q, in: query, schema: { type: string } }
+        - { name: hasC2Link, in: query, schema: { type: boolean } }
+        - { name: c2Reachable, in: query, schema: { type: boolean } }
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Offset"
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Page"
+                  - type: object
+                    properties:
+                      items: { type: array, items: { $ref: "#/components/schemas/Contact" } }
+    post:
+      tags: [Contacts]
+      summary: Create a contact
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/Contact" }
+      responses:
+        "201":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Contact" }
+
+  /contacts/{id}/merge:
+    parameters: [{ $ref: "#/components/parameters/Id" }]
+    post:
+      tags: [Contacts]
+      summary: Merge a duplicate into this contact
+      description: |
+        Moves requests, interactions, identities and preferences onto the
+        survivor and retains the loser so its id keeps resolving. Reversible
+        from the merge history — an irreversible merge is how a CRM loses a
+        citizen's history permanently.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [mergedId]
+              properties:
+                mergedId: { type: string }
+                note: { type: string }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Contact" }
+
+  # ---------------------------------------------------------------------------
+  /routing-rules/simulate:
+    post:
+      tags: [Configuration]
+      summary: Dry-run a rule set against recent requests
+      description: |
+        Replays historical requests through a candidate rule set and reports
+        what would change. Nothing is written.
+
+        Activating an untested rule is how a queue silently stops receiving
+        work: the rule matches more broadly than its author expected, and
+        nobody notices until a citizen chases a request weeks later.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                rules: { type: array, items: { type: object } }
+                useStored: { type: boolean }
+                sample: { type: integer, default: 100, maximum: 500 }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  sampled: { type: integer }
+                  changed: { type: integer }
+                  unrouted: { type: integer }
+                  ruleHits: { type: object, additionalProperties: { type: integer } }
+
+  /notifications:
+    get:
+      tags: [Reporting]
+      summary: Citizen notification delivery log
+      description: |
+        Includes suppressed and failed messages, not only successes — this is
+        the screen to open when a citizen says they never heard anything.
+      parameters:
+        - { name: state, in: query, schema: { type: string, enum: [pending, sent, failed, suppressed] } }
+        - { name: contactId, in: query, schema: { type: string } }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Page"
+                  - type: object
+                    properties:
+                      items: { type: array, items: { $ref: "#/components/schemas/Notification" } }
+
+  /reports/sla:
+    get:
+      tags: [Reporting]
+      summary: Service level compliance
+      parameters:
+        - { name: from, in: query, schema: { type: string, format: date } }
+        - { name: to, in: query, schema: { type: string, format: date } }
+        - { name: departmentId, in: query, schema: { type: string } }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { type: object }
+
+  /audit/verify:
+    get:
+      tags: [Reporting]
+      summary: Verify the audit hash chain
+      description: |
+        Replays the chain and reports the first entry whose contents or link
+        do not match. A break means a row was edited or removed directly in the
+        database — the API cannot produce one.
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  valid: { type: boolean }
+                  checked: { type: integer }
+                  brokenAtSeq: { type: integer }
+                  brokenReason: { type: string }
+
+# =============================================================================
+components:
+  securitySchemes:
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: cc_session
+      description: Set by the C2 sign-in callback. HTTP-only, SameSite=Lax.
+    bearerToken:
+      type: http
+      scheme: bearer
+      description: A `cc_pat_…` personal access token, for connected systems.
+    calloutAssertion:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        C2's short-lived RS256 Service Card assertion, verified against the same
+        JWKS as id_tokens. `aud` must equal our `client_id`; `exp` is about 60
+        seconds after `iat`.
+
+  parameters:
+    Id:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    Limit:
+      name: limit
+      in: query
+      schema: { type: integer, default: 50, maximum: 200 }
+    Offset:
+      name: offset
+      in: query
+      schema: { type: integer, default: 0 }
+    Sort:
+      name: sort
+      in: query
+      schema: { type: string }
+      description: A sort key; unknown keys fall back to the default.
+
+  responses:
+    BadRequest:
+      description: Validation failed
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+    Unauthorized:
+      description: No valid session or token
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+    NotFound:
+      description: No such resource
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+    Conflict:
+      description: |
+        The request conflicts with current state. Check `code`:
+        `stale_version` (reload and retry), `bad_transition` (illegal status
+        move), `duplicate`, or `last_admin`.
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+
+  schemas:
+    Problem:
+      type: object
+      description: RFC 7807. Switch on `code`, which is stable; `detail` is prose.
+      properties:
+        title: { type: string }
+        status: { type: integer }
+        detail: { type: string }
+        code:
+          type: string
+          enum:
+            [not_found, unauthenticated, no_access, suspended, forbidden,
+             stale_version, bad_transition, duplicate, conflict, suppressed,
+             invalid_input, invalid_json, rate_limited, internal]
+        instance: { type: string }
+        requestId: { type: string }
+
+    Page:
+      type: object
+      properties:
+        total: { type: integer }
+        limit: { type: integer }
+        offset: { type: integer }
+        hasMore: { type: boolean }
+
+    RequestStatus:
+      type: string
+      enum: [new, triaged, assigned, in_progress, waiting_citizen,
+             waiting_third_party, resolved, closed, cancelled]
+
+    Priority:
+      type: string
+      enum: [low, normal, high, urgent, critical]
+
+    ServiceRequest:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        reference:
+          type: string
+          example: SR-2026-000123
+          description: The human-quotable identifier a citizen reads out.
+        contactId: { type: string, format: uuid }
+        serviceTypeId: { type: string, format: uuid }
+        status: { $ref: "#/components/schemas/RequestStatus" }
+        priority: { $ref: "#/components/schemas/Priority" }
+        subject: { type: string }
+        description: { type: string }
+        queueId: { type: string }
+        assigneeUserId: { type: string }
+        openedAt: { type: string, format: date-time }
+        dueAt: { type: string, format: date-time, description: "In business hours, not wall time" }
+        slaBreached: { type: boolean }
+        version:
+          type: integer
+          description: Send this back on updates for optimistic concurrency.
+
+    CreateRequest:
+      type: object
+      required: [contactId]
+      properties:
+        contactId: { type: string, format: uuid }
+        serviceTypeId: { type: string, format: uuid }
+        serviceTypeCode:
+          type: string
+          description: An alternative to serviceTypeId — partners quote codes, not UUIDs.
+        subject: { type: string }
+        description: { type: string }
+        priority: { $ref: "#/components/schemas/Priority" }
+        externalRef:
+          type: string
+          description: The originating system's own identifier, for reconciliation.
+        address1: { type: string }
+        ward: { type: string }
+        formData:
+          type: object
+          description: Validated against the service type's intake form.
+
+    Contact:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        displayName: { type: string }
+        primaryEmail: { type: string }
+        primaryPhone: { type: string }
+        doNotContact: { type: boolean, description: "A hard stop on all outbound messaging." }
+        c2Reachable:
+          type: boolean
+          description: |
+            Maintained from C2's responses. False means a notification was
+            refused — consent withdrawn or the identity is unknown — so this
+            citizen must be reached by phone or post.
+        version: { type: integer }
+
+    Comment:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        body: { type: string }
+        visibility: { type: string, enum: [internal, citizen] }
+        authorName: { type: string }
+        createdAt: { type: string, format: date-time }
+
+    Notification:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        subject: { type: string }
+        state: { type: string, enum: [pending, sent, failed, suppressed] }
+        suppressReason:
+          type: string
+          enum: [no_consent, unknown_sub, no_c2_identity, do_not_contact, opted_out, max_attempts]
+          description: |
+            `no_consent` and `unknown_sub` are permanent — C2 refused, and
+            retrying cannot change that.
+        channels:
+          type: array
+          items: { type: string }
+          description: What C2 dispatched beyond the in-app inbox. Informational.
+
+    StatusBundle:
+      type: object
+      description: |
+        What C2 renders on a Service Card. Every field is optional; C2 falls
+        back to the admin-configured content for anything omitted.
+      properties:
+        title: { type: string }
+        description: { type: string }
+        CTA:
+          type: string
+          description: |
+            Note the capitalisation — that is C2's contract, not a typo.
+            Ignored when `tasks` is present.
+        contact:
+          type: object
+          properties:
+            email: { type: string }
+            phone: { type: string }
+            address1: { type: string }
+            city: { type: string }
+            postalCode: { type: string }
+        tasks:
+          type: array
+          items:
+            type: object
+            properties:
+              name: { type: string }
+              description: { type: string }
+              url: { type: string, description: "Absolute; opened in a new tab." }
+
+    Me:
+      type: object
+      properties:
+        user: { type: object }
+        department: { type: object }
+        queues: { type: array, items: { type: object } }
+        permissions:
+          type: array
+          items: { type: string }
+          description: The console renders from this rather than duplicating the role table.
+        crossDepartment: { type: boolean }
