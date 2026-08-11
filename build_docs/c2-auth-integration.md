@@ -247,13 +247,24 @@ you can drop the user's session too. C2 implements **OIDC Back-Channel Logout 1.
 
 > **Scope:** C2 fans out back-channel logout on *explicit* logout (RP `end_session` **and**
 > C2 portal sign-out). It does **not** fire on a passive **session expiry** — an idle C2
-> session timing out does not notify RPs. Handle that case with the `prompt=none` fallback
-> below (and short local sessions), so you don't leave a user signed in after their C2
-> session has simply aged out.
+> session timing out does not notify RPs, and that is intentional: a session ageing out is
+> not a logout the user asked for. In that case let *your own* session govern the app (see
+> the fallback guidance below); do **not** treat C2 simply idling out as a signal to end an
+> actively-working user's session.
 
 **Setup:** register a `backchannel_logout_uri` (a server endpoint you host) with the C2
 administrator. C2 notifies every client the user currently has an active token with that has
 one registered — best-effort and detached (a slow endpoint never blocks C2's logout).
+
+This is a **server-to-server POST**, so the URI must be reachable by C2's backend over the
+network — *not* a browser-mediated call. In production that means your app's **public HTTPS
+URL**, even when the service itself is loopback-bound behind a reverse proxy: register the
+proxied public path (e.g. `https://services.example.gov/api/c2/backchannel-logout`), **not**
+the internal `127.0.0.1:PORT` address. (The loopback form only works in dev because C2 runs
+on the same host.) Exposing the endpoint publicly is safe — it does nothing without a valid,
+signed `logout_token`, so an unauthenticated or forged request just gets a `400`. There is no
+need to invent a browser-brokered ("front-channel") logout: C2 doesn't implement one, and a
+reverse-proxied back-channel endpoint reaches the same result.
 
 **What C2 sends:**
 
@@ -291,13 +302,24 @@ session.
    Do not redirect.
 
 **Fallback / defense in depth.** Back-channel delivery is best-effort and only reaches
-clients the user still holds an active C2 token with, so don't rely on it alone:
+clients the user still holds an active C2 token with, so don't rely on it alone — but be
+deliberate about *which* missed event you're compensating for. They are not the same:
 
-- **Silent re-check:** periodically (or before sensitive actions) run a silent `prompt=none`
-  authorization request. `error=login_required` means the C2 session is gone → log the user
-  out locally.
-- **Short local sessions:** don't let your session long-outlive the C2 session; treat a
-  failed token refresh or a `401` from `userinfo` as a logout signal.
+- **A missed *explicit* logout** (your endpoint was briefly down): safe to catch with a
+  silent `prompt=none` re-check at a natural boundary — app load or tab focus. If it returns
+  `error=login_required`, end the local session.
+- **Passive IdP idle expiry is NOT a logout — do not chase it with a poll.** C2's session
+  idles out in ~15 minutes and activity in *your* app does **not** reset that timer. A
+  periodic `prompt=none`-then-logout would therefore sign out a user who is doing real work
+  in your app but hasn't touched C2 — destroying whatever they were in the middle of. Give
+  your own session its own sliding idle window that reflects activity *in your app*, and let
+  C2's silent expiry stay invisible while the user is active. Re-authentication happens
+  naturally the next time SSO is actually needed.
+- **Never let a logout of any kind destroy in-progress work.** Treat a `401` as "re-auth
+  needed", not "discard everything": preserve the form or draft the user was editing (locally
+  or server-side), then let them sign back in and resume. Back-channel logout is server-side,
+  so a logout that lands mid-form *will* `401` the next request — handle that gracefully
+  rather than dumping their input.
 
 C2 does **not** implement front-channel logout or a session-management `check_session_iframe`
 (both absent from discovery), so do not build on those.
@@ -385,7 +407,7 @@ plus `jti`.
 - [ ] API calls use `Authorization: Bearer <access_token>` against `<portal-origin>/api`.
 - [ ] (If applicable) callout endpoint verifies the inbound assertion: sig, `iss`, `aud`==client_id, `exp`.
 - [ ] Refresh tokens (if used) are server-side + encrypted; RP-initiated logout uses `end_session_endpoint`.
-- [ ] IdP-initiated logout handled: a `backchannel_logout_uri` endpoint validates the logout_token (signature, `iss`, `aud`, `events`, no `nonce`) and ends **all** of that `sub`'s local sessions, returning `200`; optional `prompt=none` fallback for missed notifications.
+- [ ] IdP-initiated logout handled: a `backchannel_logout_uri` endpoint validates the logout_token (signature, `iss`, `aud`, `events`, no `nonce`) and ends **all** of that `sub`'s local sessions, returning `200`. Register its **public** proxied URL (not `127.0.0.1`). Do **not** propagate passive IdP idle expiry to an active session, and preserve in-progress work on any logout.
 
 ---
 
