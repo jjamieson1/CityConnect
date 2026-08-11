@@ -134,7 +134,15 @@ export interface RequestFilters {
 export const api = {
   // ---- auth -------------------------------------------------------------
   me: () => call<Me>("/auth/me"),
-  loginUrl: () => `${BASE}/auth/login?returnTo=${encodeURIComponent(location.pathname)}`,
+  // returnTo carries the current deep link (path + query) so a completed
+  // sign-in lands the user where they started. Pass { silent: true } for the
+  // prompt=none probe that logs in an already-C2-authenticated visitor without
+  // any UI.
+  loginUrl: (opts: { silent?: boolean } = {}) => {
+    const params = new URLSearchParams({ returnTo: location.pathname + location.search });
+    if (opts.silent) params.set("silent", "true");
+    return `${BASE}/auth/login?${params.toString()}`;
+  },
   logout: () => call<{ status: string; endSessionUrl?: string }>("/auth/logout", { method: "POST" }),
 
   // ---- requests ---------------------------------------------------------

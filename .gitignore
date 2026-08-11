@@ -3,7 +3,10 @@
 /dist/
 web/dist/
 web/node_modules/
+web-portal/dist/
+web-portal/node_modules/
 node_modules/
+*.tsbuildinfo
 
 # Runtime data — attachments live on disk and are backed up separately
 /data/

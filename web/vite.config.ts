@@ -14,7 +14,10 @@ export default defineConfig({
   resolve: {
     // Mirrors the tsconfig paths entry, so `@/…` resolves at build time as
     // well as in the type checker.
-    alias: { "@": fileURLToPath(new URL("./src", import.meta.url)) },
+    alias: {
+      "@": fileURLToPath(new URL("./src", import.meta.url)),
+      "@shared": fileURLToPath(new URL("../shared", import.meta.url)),
+    },
   },
   build: {
     outDir: "dist",

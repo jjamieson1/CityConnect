@@ -1,8 +1,12 @@
 # CityConnect — Build Plan
 
-> **Status: built.** Every phase below is implemented and the suite is green
-> (`go test ./...`, `go vet ./...`, `npm run build`). Deviations from the plan as
-> written are recorded in §12.
+> **Status: built, and since revised.** Every phase below is implemented and the
+> suite is green (`go test ./...`, `go vet ./...`, `npm run build`).
+>
+> **The scope has since changed in one significant way: there is now a public
+> citizen portal**, which reverses `Design.md`'s "no user interfaces" and
+> supersedes decision Q3. It is a separate application on a separate origin.
+> See §11 (Q3 revised) and §12.
 
 
 > Derived from `Design.md`, `Architecure.md`, `c2-auth-integration.md`,
@@ -26,9 +30,13 @@ Three actor classes:
 
 | Actor | How they reach CC | Surface |
 | --- | --- | --- |
-| **Citizen** | Indirectly — via a C2 Service Card, or an agent logging a call | No CC login |
+| **Citizen** | The **citizen portal** on its own origin, a C2 Service Card, or an agent logging a call | Public web app, C2 SSO |
 | **Staff / agent** | Full agent console SPA, logged in via **C2 SSO** | Web UI + API |
 | **Connected system** | Machine credentials (PAT or client-credentials JWT) | REST API + webhooks |
+
+Citizens gained a surface after the original build. The two web applications are
+deliberately separate — separate builds, separate origins, separate session
+tables — for reasons set out in §12.
 
 Four integration edges with C2:
 
@@ -43,8 +51,10 @@ Four integration edges with C2:
 ### Doc reconciliation notes
 
 - `Design.md` says "no user interfaces… backend service" but then describes an admin
-  interface, and `Architecure.md` describes a full React SPA. **Reading:** the *citizen*
-  has no UI; staff do. Plan assumes an internal SPA (admin + agent console).
+  interface, and `Architecure.md` describes a full React SPA. **Original reading:** the
+  *citizen* has no UI; staff do. **This was later reversed** — a citizen portal was
+  added on request, so the statement in `Design.md` no longer holds. The portal is a
+  distinct application, not a section of the console (§12).
 - `Architecure.md` is clearly adapted from a sibling project — it names `internal/devlinks`,
   `internal/architectures`, and a `c2_pat_…` token prefix. Those are not CityConnect
   concerns. Kept: React/Vite/TS + chi + GORM + layered layout + systemd/Apache deploy.
@@ -105,10 +115,16 @@ internal/
   audit/                    # hash-chained audit log
   httpapi/                  # chi router, middleware, handlers, DTOs, error mapping
   jobs/                     # scheduler: SLA escalation, outbox drain, rollups, retention
-web/                        # Vite SPA
-  src/lib/api.ts            # thin typed fetch client
+  portal/                   # citizen-facing service layer, scoped to one contact
+web/                        # staff console (Vite SPA)
+web-portal/                 # citizen portal (Vite SPA, separate origin)
+shared/ui/                  # design tokens + primitives used by both apps
+scripts/
+  dev.sh                    # start/stop/restart/logs/doctor for the dev environment
 deployment/
-  deploy.sh  cityconnect-api.service  apache-cityconnect.conf
+  deploy.sh  cityconnect-api.service
+  apache-cityconnect.conf   # staff vhost
+  apache-cityconnect-portal.conf  # citizen vhost, stricter CSP
 devtools/
   c2stub/                   # local fake C2: discovery, JWKS, callout caller, notify sink
 docs/                       # OpenAPI spec, ADRs, runbooks
@@ -495,8 +511,23 @@ Recommended from experience with CRM/311 systems; each is cheap now and expensiv
 | --- | --- | --- | --- |
 | Q1 | Staff authentication | **C2 SSO only** | OIDC core promoted to phase 1; no local accounts; `ccadm` bootstrap + break-glass required; C2 outage = staff lockout, accepted |
 | Q2 | "Callback service" semantics | **C2 Service Card callout only** | No status-bundle push/poll for connected systems; they get event webhooks instead |
-| Q3 | Web UI scope | **Full agent console** | Phase 8 split into shell / agent console / admin console; frontend is a major workstream, not a thin veneer |
+| Q3 | Web UI scope | **Full agent console** — *superseded, see below* | Phase 8 split into shell / agent console / admin console; frontend is a major workstream, not a thin veneer |
 | Q4 | Tenancy | **Single municipality, departments inside** | No tenant column; `Department` scopes queues, service types, users, and default filters; cross-department transfer is first-class; `Contact` is city-wide |
+
+### Revised after the build
+
+**Q3 — Web UI scope. Revised 2026-08-11: a citizen portal was added.**
+
+The original answer was a staff console only, matching `Design.md`. That changed
+when the Service Card's task links turned out to point at the staff console —
+a link no citizen can follow, since they have no staff account. The fix needed
+somewhere for a citizen to land, and the natural scope of that is the portal:
+browse a service catalogue, report a problem, follow it, reply, withdraw, rate.
+
+It is a **separate application on a separate origin**, not a route inside the
+console. The reasoning is in §12; the short version is that a shared origin
+means a shared cookie jar, and the console has no business being downloadable
+by the public.
 
 ### Still open
 
@@ -555,6 +586,23 @@ department produces in a week, interpolating toward the median understates the
 tail; a supervisor asking "how bad does this get?" is better served by the
 actual worst case in the band.
 
+**Idempotency keys, added later.** Documented in the OpenAPI spec from the
+start but not implemented until asked for. `Idempotency-Key` is optional on any
+mutating request; a retry replays the original response, a key reused with a
+different body is a 422 rather than a silent discard, keys are scoped per
+caller, a *failed* attempt releases the key, and concurrent deliveries are
+settled by a unique-index insert rather than read-then-write. Building it
+surfaced a trap worth remembering: `IdempotencyKey` embeds `Base`, which has
+**soft delete**, so releasing a key left the row in place — the unique index
+still held it while the lookup, which hides deleted rows, could not find it.
+Any future table combining a unique index with soft delete has the same problem.
+
+**Empty collections are `[]`, never `null`.** A nil Go slice marshals to
+`null`, and the dashboard called `.map()` on it — so the console crashed to a
+blank page on a brand-new deployment, the one state no test covered. Fixed at
+the source across the reports and all 25 listing endpoints, with a structural
+guard (§12, *Beyond the plan*).
+
 ### Beyond the plan
 
 - **`ccadm check-c2`** prints the configured *and* discovered endpoints side by
@@ -568,6 +616,101 @@ actual worst case in the band.
   health check, and reports readiness separately without failing the deploy.
 - **The rule simulator warns when a candidate rule reroutes more than half of
   recent requests**, since that is almost always broader than intended.
+- **An empty-state guard** sweeps 26 collection endpoints against an unseeded
+  database and fails on any `null`, naming the endpoint and JSON path. Verified
+  to fail by reintroducing the bug. Its limitation is honest: the endpoint list
+  is hand-maintained, so it catches regressions rather than omissions.
+- **A React error boundary.** Previously any render error unmounted the whole
+  console — a blank page with no message. The shell now survives and shows what
+  broke.
+- **`scripts/dev.sh`** manages the development environment (start/stop/restart/
+  status/logs/doctor). It encodes the traps this project actually hit: the
+  `:5173` collision with a real C2, MariaDB's `unix_socket` auth returning 1698,
+  and `go run` orphaning its child on stop.
+- **`ccadm invite`** and `CC_BOOTSTRAP_ADMIN_EMAILS` create admin invitations by
+  email. Provisioning previously required a C2 subject identifier — which nobody
+  has before their first sign-in, which is precisely what was blocked.
+- **Sign-in denials log the subject and email**, with the exact `ccadm` command
+  to grant access. The person being refused cannot see their own subject, so
+  without this an administrator has nothing to act on.
+
+---
+
+## 13. The citizen portal (added 2026-08-11)
+
+### Why it exists
+
+The Service Card callout emitted task links pointing at
+`/requests/{reference}` on the **staff console**. Broken twice over: that route
+expects a UUID, not a reference, and a citizen following it has no staff
+account, so they were bounced to sign-in and then refused. Giving the link
+somewhere to land meant giving citizens a surface.
+
+### What a citizen can do
+
+Browse a service catalogue grouped by category, report a problem through the
+same admin-configured intake form the console uses, then track it: status in
+plain words, what the crew recorded, a reply box, withdraw while it is still
+new, and rate it once resolved.
+
+The rating closes a real gap. The scheduler could already *send* a satisfaction
+survey, but nothing could record an answer — so `csat_score` was never written
+and the CSAT report could only ever read zero.
+
+### The trust models are opposite, and the code says so
+
+This is the part worth understanding before changing anything here.
+
+- **Staff access is deny-by-default.** C2 authenticates *citizens*, so an
+  unknown subject must never become an agent.
+- **Citizen access is open by design.** Any resident may report a pothole, so a
+  first sign-in provisions a contact.
+
+The second is only safe because every read is scoped to that one contact's own
+records. The scoping therefore lives in the service layer, not the handlers: no
+method in `internal/portal` accepts a caller-supplied contact or owner.
+
+### How the surfaces are isolated
+
+| Control | Why it is structural rather than conditional |
+| --- | --- |
+| **A separate `citizen_sessions` table** | No code path can turn a portal session into a staff principal, because the staff lookup queries a table citizens never appear in. A boolean on a shared row would put that guarantee one missing `WHERE` clause away. |
+| **A separate cookie** | An agent can be signed into the console and view their own reports as a resident without one session evicting the other. |
+| **A separate origin** | The decisive one. A shared origin is a shared cookie jar: script on the public site could call staff endpoints with a staff member's ambient authority. Cookie `Path` scoping does **not** fix this — `HttpOnly` stops script reading the cookie, but the browser still attaches it to any same-origin request the script makes. |
+| **A separate build** | The public bundle contained `routing-rules/simulate`, `audit/verify`, `webhookSecret`, `user:manage` and more — free reconnaissance, and 332 KB to file one form. Now 228 KB and none of it. |
+| **404, never 403** | Another citizen's reference is indistinguishable from one that does not exist. A 403 would confirm which references are real. |
+| **Internal comments excluded at the query** | Not filtered after loading. A projection that has already fetched private notes is one refactor away from leaking them. |
+
+Eight tests cover this, including a portal session refused on ten staff
+endpoints, a staff session refused on the portal, and a comment marked `SECRET`
+staying invisible to the person who filed the request.
+
+### Deployment consequences
+
+The API is served on **both** origins. That is what keeps each app's calls
+same-origin and both cookies `SameSite=Lax` — serving the API only on the staff
+host would make the portal's calls cross-site and force `SameSite=None`,
+trading a cookie-jar problem for a CSRF one.
+
+Two vhosts (`deployment/apache-cityconnect{,-portal}.conf`). The citizen one
+carries a stricter CSP and denies `/api/*` by default, allowing exactly three
+groups: the portal's own API, the sign-in callback, and the endpoints C2 calls
+server-to-server.
+
+**Everything C2 calls is published on the citizen origin**, never the API's
+listening port. C2 is external: it cannot reach `:4021`, and in most
+deployments it cannot reach the staff host either. The first draft of this
+vhost denied the callout — it worked in development, where a Vite proxy
+forwards everything, and would have failed on the first deploy. Dev and
+production must publish the same paths or the divergence surfaces at the worst
+possible moment.
+
+**C2 needs a second `redirect_uri` registered** — one per origin, since C2
+matches them exactly. `LoginFlow` records which surface and which redirect URI
+started a flow, so one shared callback can still dispatch correctly in a
+single-origin deployment.
+
+---
 
 ### Still open
 
@@ -575,3 +718,10 @@ actual worst case in the band.
 carries `email`, and `Interaction` covers the logging side, so adding a
 mailbox poller is additive rather than a schema change. Nothing else in the
 system assumes it is absent.
+
+**Versioned migrations.** Schema is still AutoMigrate via `ccadm migrate`, so
+there is no schema rollback. Unchanged from the original build.
+
+**FULLTEXT indexes are created but unused.** Search is `LIKE`-based; the
+`internal/search` package in §3 was never built. Fine at municipal scale,
+degrades at a few hundred thousand requests.

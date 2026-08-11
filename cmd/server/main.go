@@ -24,6 +24,7 @@ import (
 	"github.com/jjamieson1/CityConnect/internal/interactions"
 	"github.com/jjamieson1/CityConnect/internal/jobs"
 	"github.com/jjamieson1/CityConnect/internal/notifications"
+	"github.com/jjamieson1/CityConnect/internal/portal"
 	"github.com/jjamieson1/CityConnect/internal/reports"
 	"github.com/jjamieson1/CityConnect/internal/requests"
 	"github.com/jjamieson1/CityConnect/internal/routing"
@@ -50,6 +51,20 @@ func run() error {
 	log.Info("starting CityConnect",
 		"env", cfg.Env, "addr", cfg.Addr, "base_path", cfg.BasePath,
 		"c2_issuer", cfg.C2.Issuer)
+
+	// The two-origin split, and the rule that C2 only ever talks to the public
+	// host, both assume the API itself is not directly reachable. If it is,
+	// say so — this is a deliberate choice in a container, and an oversight
+	// on a host running Apache.
+	if cfg.IsProd() && cfg.PubliclyBound() {
+		log.Warn("the API is listening on all interfaces",
+			"addr", cfg.Addr,
+			"expected", "127.0.0.1:4021 behind Apache",
+			"why", "everything reaches CityConnect through the reverse proxy; "+
+				"a directly reachable API bypasses the per-origin rules that separate "+
+				"the staff console from the public portal",
+			"if_intended", "set CC_ADDR explicitly, e.g. in a container or behind an external load balancer")
+	}
 
 	db, err := store.Open(cfg.DB, log)
 	if err != nil {
@@ -98,6 +113,7 @@ func run() error {
 	requestSvc.SetWebhooks(webhookSvc)
 
 	calloutSvc := callout.NewService(db, cfg, provider, contactSvc, requestSvc, log)
+	portalSvc := portal.NewService(db, cfg, provider, contactSvc, catalogSvc, requestSvc, auditSvc, log)
 
 	attachments, err := requests.NewAttachmentStore(cfg.AttachmentDir, cfg.AttachmentMaxMB, nil)
 	if err != nil {
@@ -142,7 +158,7 @@ func run() error {
 		Contacts: contactSvc, Interactions: interactionSvc,
 		Catalog: catalogSvc, Routing: routingSvc, Requests: requestSvc,
 		Notifications: notificationSvc, Webhooks: webhookSvc,
-		Reports: reportSvc, Callout: calloutSvc,
+		Reports: reportSvc, Callout: calloutSvc, Portal: portalSvc,
 		Jobs: runner, Attachments: attachments,
 	})
 

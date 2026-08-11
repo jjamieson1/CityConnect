@@ -19,7 +19,7 @@ readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
 readonly DEV_DIR="${ROOT}/.dev"
-readonly SERVICES=(stub api web)
+readonly SERVICES=(stub api web portal)
 
 # ---------------------------------------------------------------------------
 # Configuration — override any of these in scripts/dev.env (gitignored)
@@ -43,6 +43,9 @@ DB_NAME="${CC_DEV_DB_NAME:-cityconnect}"
 STUB_PORT="${CC_DEV_STUB_PORT:-5273}"
 API_PORT="${CC_DEV_API_PORT:-4021}"
 WEB_PORT="${CC_DEV_WEB_PORT:-5174}"
+# A different port is a different origin, so the two apps have separate
+# cookie jars locally exactly as they will in production.
+PORTAL_PORT="${CC_DEV_PORTAL_PORT:-5175}"
 
 CLIENT_ID="${CC_DEV_CLIENT_ID:-cityconnect-dev}"
 CLIENT_SECRET="${CC_DEV_CLIENT_SECRET:-dev-secret}"
@@ -67,6 +70,7 @@ readonly STUB_ORIGIN="http://${HOST}:${STUB_PORT}"
 readonly C2_ORIGIN="${C2_ORIGIN_OVERRIDE:-$STUB_ORIGIN}"
 readonly API_URL="http://${HOST}:${API_PORT}"
 readonly WEB_URL="http://${HOST}:${WEB_PORT}"
+readonly PORTAL_URL="http://${HOST}:${PORTAL_PORT}"
 readonly DB_DSN="${CC_DEV_DB_DSN:-${DB_USER}:${DB_PASSWORD}@tcp(${DB_HOST}:${DB_PORT})/${DB_NAME}?charset=utf8mb4&parseTime=True&loc=Local}"
 
 USING_REAL_C2=false
@@ -98,7 +102,10 @@ pidfile() { echo "${DEV_DIR}/$1.pid"; }
 logfile() { echo "${DEV_DIR}/$1.log"; }
 
 port_for() {
-  case "$1" in stub) echo "$STUB_PORT" ;; api) echo "$API_PORT" ;; web) echo "$WEB_PORT" ;; esac
+  case "$1" in
+    stub) echo "$STUB_PORT" ;; api) echo "$API_PORT" ;;
+    web) echo "$WEB_PORT" ;; portal) echo "$PORTAL_PORT" ;;
+  esac
 }
 
 running() {
@@ -257,6 +264,10 @@ api_env() {
   export CC_C2_CLIENT_ID="$CLIENT_ID"
   export CC_C2_CLIENT_SECRET="$CLIENT_SECRET"
   export CC_PUBLIC_URL="$WEB_URL"
+  # The portal's own origin, and therefore its own OIDC callback. C2 matches
+  # redirect URIs exactly, so this one needs registering separately.
+  export CC_PORTAL_PUBLIC_URL="$PORTAL_URL"
+  export CC_C2_PORTAL_REDIRECT_URL="${PORTAL_URL}/api/auth/callback"
   # Empty on purpose: in development the SPA is served at the root by Vite,
   # not under /cityconnect as in production.
   export CC_BASE_PATH=""
@@ -366,6 +377,28 @@ start_web() {
   ok "console ready"
 }
 
+start_portal() {
+  if running portal; then ok "citizen portal already running on ${PORTAL_PORT}"; return; fi
+  if port_in_use "$PORTAL_PORT"; then
+    die "port ${PORTAL_PORT} is held by $(port_owner "$PORTAL_PORT"). Set CC_DEV_PORTAL_PORT."
+  fi
+  require npm
+
+  if [[ ! -d node_modules ]]; then
+    step "Installing frontend dependencies (first run only)"
+    run npm install || return 1
+  fi
+
+  step "Starting the citizen portal on ${PORTAL_PORT}"
+  spawn portal npm --prefix web-portal run dev -- \
+    --port "$PORTAL_PORT" --strictPort --host "$HOST"
+
+  wait_for_http "$PORTAL_URL" "the citizen portal" || {
+    tail -15 "$(logfile portal)" | sed 's/^/    /'; return 1
+  }
+  ok "citizen portal ready"
+}
+
 # ---------------------------------------------------------------------------
 # Stop
 # ---------------------------------------------------------------------------
@@ -401,7 +434,7 @@ stop_service() {
   local port; port="$(port_for "$svc")"
   if port_in_use "$port"; then
     case "$svc" in
-      web) reap_port "$port" node ;;
+      web|portal) reap_port "$port" node ;;
       *)   reap_port "$port" "$svc" ;;
     esac
   fi
@@ -422,9 +455,10 @@ cmd_start() {
   local failed=()
   for svc in "${targets[@]}"; do
     case "$svc" in
-      stub) start_stub || failed+=(stub) ;;
-      api)  start_api  || failed+=(api) ;;
-      web)  start_web  || failed+=(web) ;;
+      stub)   start_stub   || failed+=(stub) ;;
+      api)    start_api    || failed+=(api) ;;
+      web)    start_web    || failed+=(web) ;;
+      portal) start_portal || failed+=(portal) ;;
       *) die "unknown service: ${svc} (expected: ${SERVICES[*]})" ;;
     esac
   done
@@ -439,7 +473,8 @@ cmd_start() {
 
   echo
   printf '%sReady.%s\n' "$C_BOLD" "$C_RESET"
-  printf '  Console   %s\n' "$WEB_URL"
+  printf '  Console   %s  %s(staff)%s\n' "$WEB_URL" "$C_DIM" "$C_RESET"
+  printf '  Portal    %s  %s(citizens)%s\n' "$PORTAL_URL" "$C_DIM" "$C_RESET"
   printf '  API       %s\n' "$API_URL"
   if $USING_REAL_C2; then
     printf '  C2        %s %s(real)%s\n' "$C2_ORIGIN" "$C_YELLOW" "$C_RESET"
@@ -458,10 +493,10 @@ cmd_start() {
 cmd_stop() {
   local targets=("$@")
   # Reverse dependency order: dependants go down before what they depend on.
-  [[ ${#targets[@]} -eq 0 ]] && targets=(web api stub)
+  [[ ${#targets[@]} -eq 0 ]] && targets=(portal web api stub)
   for svc in "${targets[@]}"; do
     case "$svc" in
-      stub|api|web) stop_service "$svc" ;;
+      stub|api|web|portal) stop_service "$svc" ;;
       *) die "unknown service: ${svc}" ;;
     esac
   done
@@ -581,8 +616,16 @@ cmd_doctor() {
   if $USING_REAL_C2; then
     if curl -fsS --max-time 3 "${C2_ORIGIN}/oidc/.well-known/openid-configuration" >/dev/null 2>&1; then
       ok "real C2 at ${C2_ORIGIN} answers discovery"
-      hint "client_id ${CLIENT_ID} must be registered there, with redirect_uri:"
-      hint "  ${API_URL}/api/auth/callback"
+      hint "client_id ${CLIENT_ID} must be registered there with all four of"
+      hint "these. C2 matches every one exactly, and each surface needs its own —"
+      hint "sign-in and sign-out are registered separately, so one can work while"
+      hint "the other fails."
+      hint "  redirect_uri             ${WEB_URL}/api/auth/callback"
+      hint "  redirect_uri             ${PORTAL_URL}/api/auth/callback"
+      hint "  post_logout_redirect_uri ${WEB_URL}/"
+      hint "  post_logout_redirect_uri ${PORTAL_URL}/"
+      hint "and the Service Card callout URL:"
+      hint "  ${PORTAL_URL}/api/citizens/{sub}/status"
     else
       bad "no discovery document at ${C2_ORIGIN}"
     fi
@@ -640,7 +683,9 @@ cmd_env() {
   ( api_env
     for v in CC_ENV CC_ADDR CC_DB_DSN CC_DB_AUTOMIGRATE CC_C2_PORTAL_ORIGIN \
              CC_C2_CLIENT_ID CC_C2_CLIENT_SECRET CC_PUBLIC_URL CC_BASE_PATH \
-             CC_BOOTSTRAP_ADMIN_SUBS CC_BOOTSTRAP_ADMIN_EMAILS CC_COOKIE_SECURE; do
+             CC_BOOTSTRAP_ADMIN_SUBS CC_BOOTSTRAP_ADMIN_EMAILS CC_COOKIE_SECURE \
+             CC_PORTAL_PUBLIC_URL CC_C2_PORTAL_REDIRECT_URL \
+             CC_C2_POST_LOGOUT_REDIRECT_URL CC_C2_PORTAL_POST_LOGOUT_REDIRECT_URL; do
       printf 'export %s=%q\n' "$v" "${!v}"
     done )
 }
@@ -665,9 +710,11 @@ ${C_BOLD}Commands${C_RESET}
   env                 Print the env vars, for running ccadm by hand
 
 ${C_BOLD}Services${C_RESET}
-  stub  The C2 stand-in on ${STUB_PORT}
-  api   The Go API on ${API_PORT}
-  web   The console on ${WEB_PORT}
+  stub    The C2 stand-in on ${STUB_PORT}
+  api     The Go API on ${API_PORT}
+  web     The staff console on ${WEB_PORT}
+  portal  The citizen portal on ${PORTAL_PORT} — a separate origin, so the
+          two apps never share a cookie jar
 
 MariaDB is not managed here — it is expected on ${DB_HOST}:${DB_PORT}.
 

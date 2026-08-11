@@ -65,7 +65,7 @@ func (s *Server) handleListServiceTypes(w http.ResponseWriter, r *http.Request) 
 		fail(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": items})
+	writeJSON(w, http.StatusOK, listing(items))
 }
 
 func (s *Server) handleGetServiceType(w http.ResponseWriter, r *http.Request) {
@@ -107,7 +107,7 @@ func (s *Server) handleListSLAPolicies(w http.ResponseWriter, r *http.Request) {
 		fail(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": items})
+	writeJSON(w, http.StatusOK, listing(items))
 }
 
 func (s *Server) handleSaveSLAPolicy(w http.ResponseWriter, r *http.Request) {
@@ -132,7 +132,7 @@ func (s *Server) handleListCalendars(w http.ResponseWriter, r *http.Request) {
 		fail(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": items})
+	writeJSON(w, http.StatusOK, listing(items))
 }
 
 func (s *Server) handleSaveCalendar(w http.ResponseWriter, r *http.Request) {
@@ -163,7 +163,7 @@ func (s *Server) handleListMacros(w http.ResponseWriter, r *http.Request) {
 		fail(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": items})
+	writeJSON(w, http.StatusOK, listing(items))
 }
 
 func (s *Server) handleSaveMacro(w http.ResponseWriter, r *http.Request) {
@@ -196,7 +196,7 @@ func (s *Server) handleListTemplates(w http.ResponseWriter, r *http.Request) {
 		fail(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": items})
+	writeJSON(w, http.StatusOK, listing(items))
 }
 
 func (s *Server) handleSaveTemplate(w http.ResponseWriter, r *http.Request) {
@@ -257,7 +257,7 @@ func (s *Server) handleListQueues(w http.ResponseWriter, r *http.Request) {
 		fail(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": items})
+	writeJSON(w, http.StatusOK, listing(items))
 }
 
 func (s *Server) handleGetQueue(w http.ResponseWriter, r *http.Request) {
@@ -316,7 +316,7 @@ func (s *Server) handleListRules(w http.ResponseWriter, r *http.Request) {
 		fail(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": items})
+	writeJSON(w, http.StatusOK, listing(items))
 }
 
 func (s *Server) handleGetRule(w http.ResponseWriter, r *http.Request) {
@@ -454,7 +454,7 @@ func (s *Server) handleListDepartments(w http.ResponseWriter, r *http.Request) {
 		fail(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": items})
+	writeJSON(w, http.StatusOK, listing(items))
 }
 
 func (s *Server) handleSaveDepartment(w http.ResponseWriter, r *http.Request) {
@@ -591,7 +591,7 @@ func (s *Server) handleListSystems(w http.ResponseWriter, r *http.Request) {
 		fail(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": items})
+	writeJSON(w, http.StatusOK, listing(items))
 }
 
 func (s *Server) handleGetSystem(w http.ResponseWriter, r *http.Request) {
@@ -645,7 +645,7 @@ func (s *Server) handleListTokens(w http.ResponseWriter, r *http.Request) {
 		fail(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": items})
+	writeJSON(w, http.StatusOK, listing(items))
 }
 
 type tokenBody struct {
@@ -909,7 +909,7 @@ func (s *Server) handleTrend(w http.ResponseWriter, r *http.Request) {
 		fail(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": res})
+	writeJSON(w, http.StatusOK, listing(res))
 }
 
 func catalogFilterFrom(r *http.Request) catalog.ServiceTypeFilter {

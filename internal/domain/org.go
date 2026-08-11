@@ -136,6 +136,14 @@ func (s *Session) Active(now time.Time, idleTTL time.Duration) bool {
 	return idleTTL <= 0 || now.Sub(s.LastSeen) <= idleTTL
 }
 
+// Login audiences. One OIDC flow serves both surfaces; the audience decides
+// which kind of session the callback opens, and it is recorded when the flow
+// starts so the callback cannot be steered to the wrong one.
+const (
+	AudienceStaff   = "staff"
+	AudienceCitizen = "citizen"
+)
+
 // LoginFlow is a pending authorization-code exchange. The verifier, state and
 // nonce live server-side for the duration of the redirect round-trip.
 type LoginFlow struct {
@@ -145,7 +153,41 @@ type LoginFlow struct {
 	CodeVerifier string    `gorm:"size:128;not null" json:"-"`
 	ReturnTo     string    `gorm:"size:400" json:"-"`
 	Silent       bool      `gorm:"not null;default:false" json:"-"`
+	Audience     string    `gorm:"size:20;not null;default:'staff'" json:"-"`
+	// RedirectURL is recorded because the token exchange must present the
+	// exact value used at authorize, and the two surfaces use different ones.
+	RedirectURL  string    `gorm:"size:400" json:"-"`
 	ExpiresAt    time.Time `gorm:"index;not null" json:"-"`
+}
+
+// CitizenSession is a session on the public portal.
+//
+// It is a separate table from Session, not a flag on it, and that is the whole
+// security design: there is no code path that can turn a citizen session into
+// a staff principal, because the staff lookup queries a table citizens never
+// appear in. A boolean on a shared row would put that guarantee one missing
+// `WHERE` clause away from handing a resident the agent console.
+type CitizenSession struct {
+	Base
+	TokenHash string    `gorm:"size:64;uniqueIndex;not null" json:"-"`
+	ContactID string    `gorm:"type:char(36);index;not null" json:"contactId"`
+	C2Sub     string    `gorm:"size:255;index;not null" json:"-"`
+	ExpiresAt time.Time `gorm:"index;not null" json:"expiresAt"`
+	LastSeen  time.Time `json:"lastSeen"`
+	UserAgent string    `gorm:"size:400" json:"-"`
+	IP        string    `gorm:"size:64" json:"-"`
+
+	IDTokenHint  string     `gorm:"type:text" json:"-"`
+	RevokedAt    *time.Time `json:"-"`
+	RevokeReason string     `gorm:"size:80" json:"-"`
+}
+
+// Active reports whether the portal session may still be used.
+func (s *CitizenSession) Active(now time.Time, idleTTL time.Duration) bool {
+	if s.RevokedAt != nil || now.After(s.ExpiresAt) {
+		return false
+	}
+	return idleTTL <= 0 || now.Sub(s.LastSeen) <= idleTTL
 }
 
 // ApiToken is a personal access token for API clients and connected systems.
@@ -223,10 +265,20 @@ type AuditLog struct {
 // key returns the original response instead of creating a duplicate request.
 type IdempotencyKey struct {
 	Base
-	ClientKey    string    `gorm:"size:128;index;not null" json:"clientKey"`
-	Key          string    `gorm:"size:200;not null" json:"key"`
-	Fingerprint  string    `gorm:"size:64;not null" json:"-"`
-	StatusCode   int       `gorm:"not null" json:"statusCode"`
+	// ClientKey scopes the key to its caller, so two integrations cannot
+	// collide on the same value — and so one cannot replay another's response.
+	ClientKey string `gorm:"size:128;not null;uniqueIndex:idx_idem_client_key" json:"clientKey"`
+	Key       string `gorm:"size:200;not null;uniqueIndex:idx_idem_client_key" json:"key"`
+
+	// Fingerprint is a hash of the method, path and body. A key replayed with
+	// a *different* payload is a client bug, and answering it with the first
+	// call's result would hide that rather than surface it.
+	Fingerprint string `gorm:"size:64;not null" json:"-"`
+
+	// StatusCode is zero while the first request is still in flight, which is
+	// what lets a concurrent retry be told to wait rather than duplicating the
+	// work.
+	StatusCode   int       `gorm:"not null;default:0" json:"statusCode"`
 	ResponseBody string    `gorm:"type:text" json:"-"`
 	TargetType   string    `gorm:"size:60" json:"targetType,omitempty"`
 	TargetID     string    `gorm:"type:char(36)" json:"targetId,omitempty"`

@@ -152,6 +152,7 @@ func (s *Service) Volume(ctx context.Context, r Range) (*VolumeReport, error) {
 		out.Series = append(out.Series, *p)
 	}
 	sort.Slice(out.Series, func(i, j int) bool { return out.Series[i].Day < out.Series[j].Day })
+	out.Series = nonNil(out.Series)
 
 	if err := s.scope(ctx, r).
 		Where("status NOT IN ?", []domain.RequestStatus{domain.StatusClosed, domain.StatusCancelled}).
@@ -180,7 +181,7 @@ func (s *Service) Volume(ctx context.Context, r Range) (*VolumeReport, error) {
 			Group("label").Order("count DESC").Limit(20).Scan(&rows).Error; err != nil {
 			return nil, store.Translate(err)
 		}
-		*b.dest = rows
+		*b.dest = nonNil(rows)
 	}
 
 	return out, nil
@@ -326,6 +327,7 @@ func (s *Service) SLA(ctx context.Context, r Range) (*SLAReport, error) {
 		}
 		out.ByType = append(out.ByType, b)
 	}
+	out.ByType = nonNil(out.ByType)
 
 	return out, nil
 }
@@ -336,6 +338,19 @@ func (s *Service) dayExpr(column string) string {
 		return fmt.Sprintf("DATE_FORMAT(%s, '%%Y-%%m-%%d')", column)
 	}
 	return fmt.Sprintf("strftime('%%Y-%%m-%%d', %s)", column)
+}
+
+// nonNil turns a nil slice into an empty one.
+//
+// A nil slice marshals to JSON `null`, and every client then has to guard each
+// list before iterating it. One that forgets throws at exactly the moment
+// there is no data — a brand-new deployment — which is the worst possible time
+// for a dashboard to break. An empty collection is `[]`.
+func nonNil[T any](s []T) []T {
+	if s == nil {
+		return []T{}
+	}
+	return s
 }
 
 func round1(v float64) float64 {

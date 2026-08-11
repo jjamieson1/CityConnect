@@ -99,6 +99,8 @@ type AuthRequest struct {
 	State        string
 	Nonce        string
 	CodeVerifier string
+	// RedirectURL must be replayed verbatim at the token exchange.
+	RedirectURL string
 }
 
 // Authorize builds an authorization-code request with PKCE.
@@ -114,6 +116,15 @@ type AuthRequest struct {
 // signed in?" check, which never shows UI and returns error=login_required
 // instead.
 func (p *Provider) Authorize(ctx context.Context, silent bool) (*AuthRequest, error) {
+	return p.AuthorizeFor(ctx, p.cfg.RedirectURL, silent)
+}
+
+// AuthorizeFor builds the request against a specific redirect_uri.
+//
+// The console and the portal are served from different origins so they do not
+// share a cookie jar, which means each has its own callback — and C2 matches
+// redirect URIs exactly, so the value cannot be inferred.
+func (p *Provider) AuthorizeFor(ctx context.Context, redirectURL string, silent bool) (*AuthRequest, error) {
 	doc, err := p.discovery.get(ctx)
 	if err != nil {
 		return nil, err
@@ -138,7 +149,7 @@ func (p *Provider) Authorize(ctx context.Context, silent bool) (*AuthRequest, er
 	q := url.Values{}
 	q.Set("response_type", "code")
 	q.Set("client_id", p.cfg.ClientID)
-	q.Set("redirect_uri", p.cfg.RedirectURL)
+	q.Set("redirect_uri", redirectURL)
 	q.Set("scope", strings.Join(p.cfg.Scopes, " "))
 	q.Set("state", state)
 	q.Set("nonce", nonce)
@@ -157,6 +168,7 @@ func (p *Provider) Authorize(ctx context.Context, silent bool) (*AuthRequest, er
 		State:        state,
 		Nonce:        nonce,
 		CodeVerifier: verifier,
+		RedirectURL:  redirectURL,
 	}, nil
 }
 
@@ -173,6 +185,13 @@ type TokenResponse struct {
 // Exchange trades an authorization code for tokens. Confidential clients
 // authenticate with the client secret in addition to PKCE.
 func (p *Provider) Exchange(ctx context.Context, code, verifier string) (*TokenResponse, error) {
+	return p.ExchangeFor(ctx, code, verifier, p.cfg.RedirectURL)
+}
+
+// ExchangeFor trades a code using the redirect_uri the authorize request used.
+// A mismatch is rejected by C2, which is the point: it binds the code to the
+// surface that started the flow.
+func (p *Provider) ExchangeFor(ctx context.Context, code, verifier, redirectURL string) (*TokenResponse, error) {
 	doc, err := p.discovery.get(ctx)
 	if err != nil {
 		return nil, err
@@ -181,7 +200,7 @@ func (p *Provider) Exchange(ctx context.Context, code, verifier string) (*TokenR
 	form := url.Values{}
 	form.Set("grant_type", "authorization_code")
 	form.Set("code", code)
-	form.Set("redirect_uri", p.cfg.RedirectURL) // must match the authorize request exactly
+	form.Set("redirect_uri", redirectURL) // must match the authorize request exactly
 	form.Set("client_id", p.cfg.ClientID)
 	form.Set("code_verifier", verifier)
 
@@ -226,6 +245,18 @@ type oauthError struct {
 // local session leaves the C2 session alive, so the user stays SSO'd and walks
 // straight back in.
 func (p *Provider) EndSessionURL(ctx context.Context, idTokenHint string) (string, error) {
+	return p.EndSessionURLFor(ctx, idTokenHint, p.cfg.PostLogoutRedirectURL)
+}
+
+// EndSessionURLFor builds the sign-out URL with a specific
+// post_logout_redirect_uri.
+//
+// The console and the portal are different origins with different audiences,
+// so they return to different places. C2 matches these exactly, the same as
+// redirect URIs: sending the console's value from the portal does not merely
+// land the citizen on a staff page, it is rejected by C2 — so each surface
+// needs its own registration.
+func (p *Provider) EndSessionURLFor(ctx context.Context, idTokenHint, postLogoutRedirectURL string) (string, error) {
 	doc, err := p.discovery.get(ctx)
 	if err != nil {
 		return "", err
@@ -238,8 +269,8 @@ func (p *Provider) EndSessionURL(ctx context.Context, idTokenHint string) (strin
 	if idTokenHint != "" {
 		q.Set("id_token_hint", idTokenHint)
 	}
-	if p.cfg.PostLogoutRedirectURL != "" {
-		q.Set("post_logout_redirect_uri", p.cfg.PostLogoutRedirectURL)
+	if postLogoutRedirectURL != "" {
+		q.Set("post_logout_redirect_uri", postLogoutRedirectURL)
 	}
 	q.Set("client_id", p.cfg.ClientID)
 

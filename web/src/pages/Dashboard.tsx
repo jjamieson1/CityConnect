@@ -163,8 +163,8 @@ export default function Dashboard() {
             ) : volume.data ? (
               <TimeSeries
                 series={[
-                  { name: "Opened", points: volume.data.series.map((p) => ({ x: p.day, y: p.opened })) },
-                  { name: "Closed", points: volume.data.series.map((p) => ({ x: p.day, y: p.closed })) },
+                  { name: "Opened", points: (volume.data.series ?? []).map((p) => ({ x: p.day, y: p.opened })) },
+                  { name: "Closed", points: (volume.data.series ?? []).map((p) => ({ x: p.day, y: p.closed })) },
                 ]}
               />
             ) : null}
@@ -203,10 +203,10 @@ export default function Dashboard() {
       {can("report:read") && volume.data && (
         <div className="grid gap-5 md:grid-cols-2">
           <Card title="Most requested services">
-            <BarList data={volume.data.byServiceType.slice(0, 8)} />
+            <BarList data={(volume.data.byServiceType ?? []).slice(0, 8)} />
           </Card>
           <Card title="Where requests come from">
-            <BarList data={volume.data.bySource} colorIndex={2} />
+            <BarList data={volume.data.bySource ?? []} colorIndex={2} />
           </Card>
         </div>
       )}

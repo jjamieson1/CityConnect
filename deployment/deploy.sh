@@ -22,6 +22,7 @@ APP_NAME="${APP_NAME:-cityconnect}"
 DEPLOY_HOST="${DEPLOY_HOST:-}"
 REMOTE_APP_DIR="${REMOTE_APP_DIR:-/opt/${APP_NAME}}"
 REMOTE_WEB_DIR="${REMOTE_WEB_DIR:-/var/www/${APP_NAME}}"
+REMOTE_PORTAL_DIR="${REMOTE_PORTAL_DIR:-/var/www/${APP_NAME}-portal}"
 SERVICE_NAME="${SERVICE_NAME:-${APP_NAME}-api}"
 BASE_PATH="${BASE_PATH:-/${APP_NAME}}"
 HEALTH_URL="${HEALTH_URL:-}"
@@ -95,12 +96,14 @@ if ! $SKIP_API; then
 fi
 
 if ! $SKIP_WEB; then
-  log "Building the SPA for base path ${BASE_PATH}/"
-  (
-    cd web
-    run npm ci --silent
-    run env CC_BASE_PATH="${BASE_PATH}/" npm run build
-  )
+  log "Building the staff console for base path ${BASE_PATH}/"
+  run npm ci --silent
+  ( cd web && run env CC_BASE_PATH="${BASE_PATH}/" npm run build )
+
+  # The portal is a separate application on its own origin, so it builds at
+  # the root of its host rather than under a path.
+  log "Building the citizen portal"
+  ( cd web-portal && run npm run build )
 fi
 
 # ---------------------------------------------------------------------------
@@ -126,11 +129,16 @@ if ! $SKIP_API; then
 fi
 
 if ! $SKIP_WEB; then
-  log "Uploading the SPA"
-  run ssh "$DEPLOY_HOST" "sudo mkdir -p ${REMOTE_WEB_DIR}"
+  log "Uploading the staff console"
+  run ssh "$DEPLOY_HOST" "sudo mkdir -p ${REMOTE_WEB_DIR} ${REMOTE_PORTAL_DIR}"
   run rsync -az --delete \
     --rsync-path="sudo rsync" \
     web/dist/ "$DEPLOY_HOST:${REMOTE_WEB_DIR}/"
+
+  log "Uploading the citizen portal"
+  run rsync -az --delete \
+    --rsync-path="sudo rsync" \
+    web-portal/dist/ "$DEPLOY_HOST:${REMOTE_PORTAL_DIR}/"
 fi
 
 # ---------------------------------------------------------------------------

@@ -302,7 +302,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{"items": out})
+	writeJSON(w, http.StatusOK, listing(out))
 }
 
 func (s *Server) handleListSavedViews(w http.ResponseWriter, r *http.Request) {
@@ -319,7 +319,7 @@ func (s *Server) handleListSavedViews(w http.ResponseWriter, r *http.Request) {
 		fail(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": items})
+	writeJSON(w, http.StatusOK, listing(items))
 }
 
 func (s *Server) handleSaveSavedView(w http.ResponseWriter, r *http.Request) {

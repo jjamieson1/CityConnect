@@ -109,6 +109,7 @@ func (s *Service) Agents(ctx context.Context, r Range) (*AgentReport, error) {
 
 		out.Rows = append(out.Rows, ar)
 	}
+	out.Rows = nonNil(out.Rows)
 	return out, nil
 }
 
@@ -201,7 +202,7 @@ func (s *Service) CSAT(ctx context.Context, r Range) (*CSATReport, error) {
 	if err != nil {
 		return nil, store.Translate(err)
 	}
-	out.ByType = byType
+	out.ByType = nonNil(byType)
 
 	return out, nil
 }
@@ -265,6 +266,8 @@ func (s *Service) Geo(ctx context.Context, r Range) (*GeoReport, error) {
 	err = s.scope(ctx, r).
 		Where("opened_at BETWEEN ? AND ? AND ward = '' AND latitude = 0", r.From, r.To).
 		Count(&out.Unmapped).Error
+
+	out.ByWard, out.ByPostal, out.Clustered = nonNil(out.ByWard), nonNil(out.ByPostal), nonNil(out.Clustered)
 	return out, store.Translate(err)
 }
 

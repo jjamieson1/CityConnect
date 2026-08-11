@@ -118,7 +118,7 @@ func (s *Server) handleContactTimeline(w http.ResponseWriter, r *http.Request) {
 		fail(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": items})
+	writeJSON(w, http.StatusOK, listing(items))
 }
 
 func (s *Server) handleFindDuplicates(w http.ResponseWriter, r *http.Request) {
@@ -127,7 +127,7 @@ func (s *Server) handleFindDuplicates(w http.ResponseWriter, r *http.Request) {
 		fail(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": items})
+	writeJSON(w, http.StatusOK, listing(items))
 }
 
 type mergeBody struct {
@@ -168,7 +168,7 @@ func (s *Server) handleMergeHistory(w http.ResponseWriter, r *http.Request) {
 		fail(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": items})
+	writeJSON(w, http.StatusOK, listing(items))
 }
 
 func (s *Server) handleAddIdentity(w http.ResponseWriter, r *http.Request) {
@@ -225,7 +225,7 @@ func (s *Server) handleListConsents(w http.ResponseWriter, r *http.Request) {
 		fail(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": items})
+	writeJSON(w, http.StatusOK, listing(items))
 }
 
 func (s *Server) handleSetConsent(w http.ResponseWriter, r *http.Request) {
@@ -248,7 +248,7 @@ func (s *Server) handleListGroups(w http.ResponseWriter, r *http.Request) {
 		fail(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": items})
+	writeJSON(w, http.StatusOK, listing(items))
 }
 
 func (s *Server) handleSaveGroup(w http.ResponseWriter, r *http.Request) {

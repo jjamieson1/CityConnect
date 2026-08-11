@@ -546,3 +546,56 @@ export interface SearchResult {
   reference?: string;
   status?: string;
 }
+
+// ---------------------------------------------------------------------------
+// Citizen portal
+// ---------------------------------------------------------------------------
+
+export interface CatalogEntry {
+  id: string;
+  code: string;
+  name: string;
+  category?: string;
+  description?: string;
+  department?: string;
+  requiresLocation: boolean;
+  fields: FormField[];
+}
+
+export interface MyRequest {
+  reference: string;
+  subject: string;
+  description?: string;
+  serviceType?: string;
+  department?: string;
+  status: RequestStatus;
+  statusLabel: string;
+  open: boolean;
+  address?: string;
+  openedAt: string;
+  updatedAt: string;
+  expectedBy?: string;
+  resolvedAt?: string;
+  resolution?: string;
+  canCancel: boolean;
+  canComment: boolean;
+  canRate: boolean;
+  csatScore?: number;
+  updates?: MyUpdate[];
+}
+
+export interface MyUpdate {
+  at: string;
+  kind: "note" | "status";
+  body: string;
+  author?: string;
+  mine: boolean;
+}
+
+export interface PortalProfile {
+  name: string;
+  email?: string;
+  phone?: string;
+  address?: string;
+  openRequests: number;
+}

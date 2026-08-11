@@ -76,6 +76,8 @@ func (s *Service) StartLogin(ctx context.Context, returnTo string, silent bool) 
 		CodeVerifier: req.CodeVerifier,
 		ReturnTo:     sanitizeReturnTo(returnTo),
 		Silent:       silent,
+		Audience:     domain.AudienceStaff,
+		RedirectURL:  req.RedirectURL,
 		ExpiresAt:    time.Now().UTC().Add(10 * time.Minute),
 	}
 	if err := s.db.WithContext(ctx).Create(&flow).Error; err != nil {
@@ -109,7 +111,7 @@ func (s *Service) CompleteLogin(ctx context.Context, code, state, userAgent, ip 
 		return nil, ErrInvalidState
 	}
 
-	tokens, err := s.oidc.Exchange(ctx, code, flow.CodeVerifier)
+	tokens, err := s.oidc.ExchangeFor(ctx, code, flow.CodeVerifier, flow.RedirectURL)
 	if err != nil {
 		return nil, err
 	}

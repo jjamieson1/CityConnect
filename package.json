@@ -1,0 +1,10 @@
+{
+  "name": "cityconnect-frontend",
+  "private": true,
+  "description": "Workspace root. Two applications share one dependency tree and one UI kit: the staff console (web) and the citizen portal (web-portal). They are separate builds served from separate origins, so a resident never downloads admin code and the two never share a cookie jar.",
+  "workspaces": ["web", "web-portal"],
+  "scripts": {
+    "build": "npm run build --workspace web && npm run build --workspace web-portal",
+    "lint": "npm run lint --workspace web && npm run lint --workspace web-portal"
+  }
+}

@@ -124,18 +124,18 @@ function VolumeReport() {
           >
             <TimeSeries
               series={[
-                { name: "Opened", points: report.data.series.map((p) => ({ x: p.day, y: p.opened })) },
-                { name: "Closed", points: report.data.series.map((p) => ({ x: p.day, y: p.closed })) },
+                { name: "Opened", points: (report.data.series ?? []).map((p) => ({ x: p.day, y: p.opened })) },
+                { name: "Closed", points: (report.data.series ?? []).map((p) => ({ x: p.day, y: p.closed })) },
               ]}
               height={280}
             />
           </Card>
 
           <div className="grid gap-4 md:grid-cols-2">
-            <Card title="By service type"><BarList data={report.data.byServiceType} /></Card>
-            <Card title="By queue"><BarList data={report.data.byQueue} colorIndex={2} /></Card>
-            <Card title="By priority"><BarList data={report.data.byPriority} colorIndex={3} /></Card>
-            <Card title="By channel"><BarList data={report.data.bySource} colorIndex={4} /></Card>
+            <Card title="By service type"><BarList data={report.data.byServiceType ?? []} /></Card>
+            <Card title="By queue"><BarList data={report.data.byQueue ?? []} colorIndex={2} /></Card>
+            <Card title="By priority"><BarList data={report.data.byPriority ?? []} colorIndex={3} /></Card>
+            <Card title="By channel"><BarList data={report.data.bySource ?? []} colorIndex={4} /></Card>
           </div>
         </>
       ) : null}
@@ -184,13 +184,13 @@ function SLAReportView() {
               </a>
             }
           >
-            {report.data.byServiceType.length === 0 ? (
+            {(report.data.byServiceType ?? []).length === 0 ? (
               <p className="py-6 text-center text-sm text-ink-muted">
                 Nothing completed in this period.
               </p>
             ) : (
               <div className="space-y-4">
-                {report.data.byServiceType.map((row) => (
+                {(report.data.byServiceType ?? []).map((row) => (
                   <ComplianceMeter
                     key={row.label}
                     label={`${row.label} (${row.total} completed)`}
@@ -234,7 +234,7 @@ function AgentReportView() {
             {report.data.note}
           </p>
 
-          {report.data.rows.length === 0 ? (
+          {(report.data.rows ?? []).length === 0 ? (
             <p className="py-6 text-center text-sm text-ink-muted">No assigned work in this period.</p>
           ) : (
             <div className="overflow-x-auto">
@@ -251,7 +251,7 @@ function AgentReportView() {
                   </tr>
                 </thead>
                 <tbody>
-                  {report.data.rows.map((row) => (
+                  {(report.data.rows ?? []).map((row) => (
                     <tr key={row.userId}>
                       <td>{row.name}</td>
                       <td className="text-right tabular-nums">{row.assigned}</td>

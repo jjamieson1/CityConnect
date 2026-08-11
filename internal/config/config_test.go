@@ -86,3 +86,83 @@ func TestProdRequiresSafeDefaults(t *testing.T) {
 		}
 	}
 }
+
+// The two-origin split — a staff console on one host, a citizen portal on
+// another, each with its own cookie jar — is enforced by Apache deciding what
+// each origin may reach. That only holds if the API itself is not directly
+// reachable, so production binds loopback unless told otherwise.
+//
+// Development binds every interface, because opening the console from a phone
+// on the same network is how you check a form on a real device.
+func TestProdBindsLoopbackByDefault(t *testing.T) {
+	base := func(t *testing.T) {
+		t.Setenv("CC_ENV", "prod")
+		t.Setenv("CC_C2_PORTAL_ORIGIN", "https://portal.example.gov/c2")
+		t.Setenv("CC_C2_CLIENT_ID", "id")
+		t.Setenv("CC_C2_CLIENT_SECRET", "secret")
+		t.Setenv("CC_PUBLIC_URL", "https://city.example.gov")
+		t.Setenv("CC_PORTAL_PUBLIC_URL", "https://services.example.gov")
+		t.Setenv("CC_DB_AUTOMIGRATE", "false")
+		t.Setenv("CC_COOKIE_SECURE", "true")
+	}
+
+	t.Run("default", func(t *testing.T) {
+		base(t)
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("load: %v", err)
+		}
+		if cfg.Addr != "127.0.0.1:4021" {
+			t.Errorf("Addr = %q, want 127.0.0.1:4021", cfg.Addr)
+		}
+		if cfg.PubliclyBound() {
+			t.Error("PubliclyBound() = true for a loopback address")
+		}
+	})
+
+	// A container or a deployment behind an external load balancer must bind
+	// outward, so an explicit setting is honoured — and reported, not refused.
+	t.Run("explicit override is honoured", func(t *testing.T) {
+		base(t)
+		t.Setenv("CC_ADDR", "0.0.0.0:4021")
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("load: %v", err)
+		}
+		if cfg.Addr != "0.0.0.0:4021" {
+			t.Errorf("Addr = %q, want the explicit value", cfg.Addr)
+		}
+		if !cfg.PubliclyBound() {
+			t.Error("PubliclyBound() = false for 0.0.0.0")
+		}
+	})
+
+	t.Run("dev binds all interfaces", func(t *testing.T) {
+		t.Setenv("CC_C2_PORTAL_ORIGIN", "http://localhost:5173")
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("load: %v", err)
+		}
+		if cfg.Addr != ":4021" {
+			t.Errorf("Addr = %q, want :4021 in dev", cfg.Addr)
+		}
+	})
+}
+
+func TestPubliclyBound(t *testing.T) {
+	for addr, want := range map[string]bool{
+		"127.0.0.1:4021": false,
+		"[::1]:4021":     false,
+		"localhost:4021": false,
+		"0.0.0.0:4021":   true,
+		"[::]:4021":      true,
+		":4021":          true,
+		"10.0.0.5:4021":  true,
+		"garbage":        true, // unparseable: assume the worse case and say so
+	} {
+		c := &Config{Addr: addr}
+		if got := c.PubliclyBound(); got != want {
+			t.Errorf("PubliclyBound(%q) = %v, want %v", addr, got, want)
+		}
+	}
+}

@@ -51,10 +51,12 @@ func (s *Server) handleCallback(w http.ResponseWriter, r *http.Request) {
 
 	// C2 reports failures as a redirect parameter rather than a status code.
 	if errCode := q.Get("error"); errCode != "" {
-		// login_required is the expected answer to a silent prompt=none check,
-		// not a failure worth showing anybody.
+		// login_required / interaction_required are the expected answers to a
+		// silent prompt=none probe: the visitor simply has no live C2 session.
+		// Land them on the clean sign-in page with no error banner — this is a
+		// normal "please sign in", not a fault.
 		if errCode == "login_required" || errCode == "interaction_required" {
-			s.redirectToApp(w, r, "/login?reason=session_expired")
+			s.redirectToApp(w, r, "/login")
 			return
 		}
 		s.log.WarnContext(r.Context(), "C2 returned an authorization error",
@@ -67,6 +69,15 @@ func (s *Server) handleCallback(w http.ResponseWriter, r *http.Request) {
 	if code == "" || state == "" {
 		writeProblem(w, r, http.StatusBadRequest, "invalid_callback",
 			"The sign-in response was missing its code or state.")
+		return
+	}
+
+	// The console and the portal share one registered redirect_uri, because C2
+	// matches them exactly and asking an administrator to register a second is
+	// friction for no benefit. The flow recorded which surface it started on,
+	// so the callback dispatches on that rather than guessing.
+	if s.audienceForState(r, state) == domain.AudienceCitizen {
+		s.completePortalLogin(w, r, code, state)
 		return
 	}
 
@@ -91,6 +102,47 @@ func (s *Server) handleCallback(w http.ResponseWriter, r *http.Request) {
 	target := res.ReturnTo
 	if target == "" {
 		target = "/"
+	}
+	s.redirectToApp(w, r, target)
+}
+
+// audienceForState reads which surface a pending sign-in belongs to.
+//
+// It only peeks: the flow is consumed by whichever service completes it, so
+// state remains single-use.
+func (s *Server) audienceForState(r *http.Request, state string) string {
+	var flow domain.LoginFlow
+	err := s.DB.WithContext(r.Context()).
+		Select("audience").Where("state = ?", state).First(&flow).Error
+	if err != nil {
+		return domain.AudienceStaff
+	}
+	if flow.Audience == "" {
+		return domain.AudienceStaff
+	}
+	return flow.Audience
+}
+
+// completePortalLogin finishes a citizen sign-in that arrived on the shared
+// callback.
+func (s *Server) completePortalLogin(w http.ResponseWriter, r *http.Request, code, state string) {
+	if s.Portal == nil {
+		s.redirectToApp(w, r, "/portal?reason=unavailable")
+		return
+	}
+
+	res, err := s.Portal.CompleteLogin(r.Context(), code, state, r.UserAgent(), clientIP(r))
+	if err != nil {
+		s.log.WarnContext(r.Context(), "portal sign-in failed", "error", err)
+		s.redirectToApp(w, r, "/portal?reason=failed")
+		return
+	}
+
+	s.setPortalCookie(w, res.SessionToken, res.ExpiresAt)
+
+	target := res.ReturnTo
+	if target == "" {
+		target = "/portal"
 	}
 	s.redirectToApp(w, r, target)
 }
@@ -188,7 +240,7 @@ func (s *Server) handleMySessions(w http.ResponseWriter, r *http.Request) {
 		fail(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": sessions})
+	writeJSON(w, http.StatusOK, listing(sessions))
 }
 
 // ---------------------------------------------------------------------------
@@ -219,6 +271,17 @@ func (s *Server) handleBackchannelLogout(w http.ResponseWriter, r *http.Request)
 	if token == "" {
 		writeProblem(w, r, http.StatusBadRequest, "missing_token", "logout_token is required.")
 		return
+	}
+
+	// C2's logout token identifies the person, not a session or a surface, so
+	// it must end their portal sessions as well as their staff ones.
+	if s.Portal != nil {
+		if claims, err := s.OIDC.VerifyLogoutToken(r.Context(), token); err == nil {
+			if n, err := s.Portal.RevokeForSubject(r.Context(), claims.Subject); err == nil && n > 0 {
+				s.log.InfoContext(r.Context(), "back-channel logout ended portal sessions",
+					"sub", claims.Subject, "sessions", n)
+			}
+		}
 	}
 
 	if err := s.agents.BackchannelLogout(r.Context(), token); err != nil {

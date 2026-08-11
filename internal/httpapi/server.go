@@ -23,6 +23,7 @@ import (
 	"github.com/jjamieson1/CityConnect/internal/interactions"
 	"github.com/jjamieson1/CityConnect/internal/jobs"
 	"github.com/jjamieson1/CityConnect/internal/notifications"
+	"github.com/jjamieson1/CityConnect/internal/portal"
 	"github.com/jjamieson1/CityConnect/internal/reports"
 	"github.com/jjamieson1/CityConnect/internal/requests"
 	"github.com/jjamieson1/CityConnect/internal/routing"
@@ -47,6 +48,7 @@ type Deps struct {
 	Webhooks      *webhooks.Service
 	Reports       *reports.Service
 	Callout       *callout.Service
+	Portal        *portal.Service
 	Jobs          *jobs.Runner
 	Attachments   *requests.AttachmentStore
 }
@@ -111,9 +113,12 @@ func (s *Server) routes() {
 	r.Route("/api", func(api chi.Router) {
 		api.Use(s.limiter.middleware)
 		api.Use(s.auth)
+		// After auth, so a key is scoped to the caller that sent it.
+		api.Use(s.idempotency)
 
 		s.mountAuth(api)
 		s.mountC2(api)
+		s.mountPortal(api)
 
 		api.Group(func(p chi.Router) {
 			p.Use(requireAuth)

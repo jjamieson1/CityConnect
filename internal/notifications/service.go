@@ -116,17 +116,17 @@ func (s *Service) buildContext(req *domain.Request, contact *domain.Contact, ext
 	ctx := catalog.TemplateContext{
 		Reference: req.Reference, Subject: req.Subject,
 		Status: string(req.Status), StatusLabel: catalog.StatusLabel(req.Status),
-		Priority:    req.Priority,
-		ContactName: contact.DisplayName,
-		Ward:        req.Ward,
-		OpenedAt:    catalog.FormatDate(&req.OpenedAt),
-		UpdatedAt:   catalog.FormatDate(&req.LastActivityA),
-		DueAt:       catalog.FormatDate(req.DueAt),
-		ResolvedAt:  catalog.FormatDate(req.ResolvedAt),
+		Priority:       req.Priority,
+		ContactName:    contact.DisplayName,
+		Ward:           req.Ward,
+		OpenedAt:       catalog.FormatDate(&req.OpenedAt),
+		UpdatedAt:      catalog.FormatDate(&req.LastActivityA),
+		DueAt:          catalog.FormatDate(req.DueAt),
+		ResolvedAt:     catalog.FormatDate(req.ResolvedAt),
 		ResolutionNote: req.ResolutionNote,
-		CityName:    "the City",
-		PortalURL:   s.cfg.PublicURL + s.cfg.BasePath,
-		RequestURL:  fmt.Sprintf("%s%s/requests/%s", s.cfg.PublicURL, s.cfg.BasePath, req.Reference),
+		CityName:       "the City",
+		PortalURL:      s.cfg.PortalPublicURL,
+		RequestURL:     fmt.Sprintf("%s/requests/%s", s.cfg.PortalPublicURL, req.Reference),
 	}
 
 	ctx.ContactFirst = contact.GivenName

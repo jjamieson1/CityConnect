@@ -9,6 +9,7 @@ func AllModels() []any {
 		&Department{},
 		&User{},
 		&Session{},
+		&CitizenSession{},
 		&LoginFlow{},
 		&ApiToken{},
 		&ConnectedSystem{},

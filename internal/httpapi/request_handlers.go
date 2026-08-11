@@ -328,7 +328,7 @@ func (s *Server) handleRequestEvents(w http.ResponseWriter, r *http.Request) {
 		fail(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": events})
+	writeJSON(w, http.StatusOK, listing(events))
 }
 
 func (s *Server) handleListComments(w http.ResponseWriter, r *http.Request) {
@@ -337,7 +337,7 @@ func (s *Server) handleListComments(w http.ResponseWriter, r *http.Request) {
 		fail(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": comments})
+	writeJSON(w, http.StatusOK, listing(comments))
 }
 
 type commentBody struct {
@@ -375,7 +375,7 @@ func (s *Server) handleListLinks(w http.ResponseWriter, r *http.Request) {
 		fail(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": links})
+	writeJSON(w, http.StatusOK, listing(links))
 }
 
 type linkBody struct {
@@ -435,7 +435,7 @@ func (s *Server) handleListAttachments(w http.ResponseWriter, r *http.Request) {
 		fail(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": items})
+	writeJSON(w, http.StatusOK, listing(items))
 }
 
 func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {

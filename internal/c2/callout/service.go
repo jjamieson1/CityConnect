@@ -176,7 +176,11 @@ func (s *Service) Build(ctx context.Context, sub string) (*Bundle, error) {
 func (s *Service) render(ctx context.Context, contact *domain.Contact, open []domain.Request) *Bundle {
 	b := &Bundle{
 		Title: "Your service requests",
-		CTA:   s.cfg.PublicURL + s.cfg.BasePath + "/requests",
+		// The citizen portal's own origin. Not the staff console — a citizen
+		// following that link has no staff account and would be bounced to
+		// sign-in and then refused — and not a /portal path, since the portal
+		// is now its own application at the root of its host.
+		CTA: s.cfg.PortalPublicURL,
 	}
 
 	if len(open) == 0 {
@@ -200,7 +204,16 @@ func (s *Service) render(ctx context.Context, contact *domain.Contact, open []do
 			Name:        fmt.Sprintf("%s — %s", r.Reference, r.Subject),
 			Description: s.describe(ctx, &r),
 			// Absolute URLs only; C2 opens these in a new tab.
-			URL: fmt.Sprintf("%s%s/requests/%s", s.cfg.PublicURL, s.cfg.BasePath, r.Reference),
+			//
+			// The citizen portal's own origin, never the staff console's. A
+			// citizen following this link has no console account, so a link
+			// there ends at a sign-in page that refuses them — and the portal
+			// is a separate host at its own root, so the console's base path
+			// does not apply either.
+			//
+			// Keyed on the reference, which is what the portal routes on and what
+			// the citizen sees quoted everywhere else.
+			URL: fmt.Sprintf("%s/requests/%s", s.cfg.PortalPublicURL, r.Reference),
 		})
 	}
 

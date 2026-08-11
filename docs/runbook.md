@@ -14,13 +14,20 @@ This has the longest lead time and blocks staff sign-in entirely. Send it first.
 | **Portal origin** | The single public host serving the citizen portal. Everything derives from it. |
 | **`client_id`** | The `aud` on every token we verify. |
 | **`client_secret`** | Server-side client authentication (unless using private-key JWT only). |
-| **Registered `redirect_uri`s** | Exact-match. Register *every* environment variant, including local dev. A trailing slash is a different URI. |
+| **Registered `redirect_uri`s** | Exact-match. Register *every* environment variant, including local dev. A trailing slash is a different URI. **Two per environment**: one for the staff console's origin and one for the citizen portal's, because they are separate hosts. |
+| **Registered `post_logout_redirect_uri`s** | Also exact-match, and also **two per environment** — the console's base path and the portal's root. Easy to forget, because sign-*in* works perfectly without it and only sign-out breaks. |
 | **Allowed scopes** | We request `openid profile email`. |
-| **Callout URL + auth mode** | Give them `https://<host>/cityconnect/api/citizens/{sub}/status` and ask for **`signed_jwt`**. |
-| **`backchannel_logout_uri`** | Register `https://<host>/cityconnect/api/c2/backchannel-logout`. Not advertised in discovery — it must be arranged deliberately. |
-| **Our JWKS URL** | `https://<host>/cityconnect/api/c2/jwks`, so C2 can verify our notification client assertions. |
+| **Callout URL + auth mode** | Give them `https://services.<host>/api/citizens/{sub}/status` and ask for **`signed_jwt`**. |
+| **`backchannel_logout_uri`** | Register `https://services.<host>/api/c2/backchannel-logout`. Not advertised in discovery — it must be arranged deliberately. |
+| **Our JWKS URL** | `https://services.<host>/api/c2/jwks`, so C2 can verify our notification client assertions. |
 | **Partner notifications base URL** | Mounted at `<base>/partner`, a sibling of the OIDC endpoints — **not** under `/api`. |
 | **Confirmation that staff can hold C2 identities** | C2 is a *citizen* identity provider. With SSO as our only staff login, this is load-bearing. Ask how staff accounts are provisioned. |
+
+**Every URL you give C2 is on the citizen origin.** C2 is an external system:
+it cannot reach the API's listening port, and in most deployments it cannot
+reach the staff console's host either. The public origin is the only surface it
+talks to, and Apache proxies from there to the API on loopback. Handing C2 an
+address ending `:4021` works on a developer's laptop and nowhere else.
 
 **Register test and conformance clients under a separate application.** An extra
 client under ours can change which `client_id` C2 signs callouts with, producing
@@ -56,8 +63,10 @@ sudo chmod 0640 /opt/cityconnect/keys/client-signing.pem
 # 5. Service and proxy
 sudo cp deployment/cityconnect-api.service /etc/systemd/system/
 sudo cp deployment/apache-cityconnect.conf /etc/apache2/conf-available/
+sudo cp deployment/apache-cityconnect-portal.conf /etc/apache2/sites-available/
 sudo a2enmod proxy proxy_http headers rewrite deflate expires
 sudo a2enconf apache-cityconnect
+sudo a2ensite apache-cityconnect-portal   # the citizen portal's own vhost
 sudo systemctl daemon-reload && sudo systemctl enable --now cityconnect-api
 sudo systemctl reload apache2
 
@@ -92,6 +101,21 @@ curl -fsS localhost:4021/readyz | jq                       # database + C2 reach
 sudo -u cityconnect /opt/cityconnect/bin/ccadm list-users
 ```
 
+**Confirm the API is not reachable except through Apache.** From another
+machine:
+
+```sh
+curl --max-time 5 http://<server>:4021/healthz     # must fail to connect
+curl -fsS https://services.<host>/api/portal/catalog | jq   # must succeed
+```
+
+The first must fail. `CC_ADDR` defaults to `127.0.0.1:4021` in production for
+this reason, and the boot log carries a warning if the API is listening on all
+interfaces. The console and the portal are separated by what each Apache vhost
+is allowed to proxy; an API that answers on a public interface is reachable
+around both, which puts the staff surface on the open network no matter what
+the vhosts say.
+
 ---
 
 ## 3. Recovery
@@ -111,6 +135,25 @@ sudo -u cityconnect /opt/cityconnect/bin/ccadm check-c2
 | Connection refused or timeout | C2 is down or unreachable from this host. Sessions already open keep working for their remaining TTL; nobody new can sign in. There is no local fallback by design. |
 | Discovery fine, but users get "no CityConnect access" | Their C2 identity has no CityConnect user. Deny-by-default is intentional: C2 authenticates *citizens*, so auto-provisioning would open the console to the public. Invite them by email, or `ccadm grant-role`. |
 | Users are asked for their password every visit | Something is sending `prompt=login` or `max_age=0`. CityConnect never does — check whether a proxy or a C2-side client setting is adding it. |
+| `502` from Apache, nothing in the API log | Apache cannot reach `127.0.0.1:4021`. Either the service is down (`systemctl status cityconnect-api`) or `CC_ADDR` was set to an address Apache is not proxying to. |
+
+### Signing out fails, or lands on the wrong app
+
+Sign-in and sign-out are registered separately in C2, so one can work while the
+other does not. Both surfaces have their own return address:
+
+| Surface | `post_logout_redirect_uri` |
+| --- | --- |
+| Staff console | `https://city.<host>/cityconnect/` |
+| Citizen portal | `https://services.<host>/` |
+
+C2 matches these exactly. A citizen sent to the console's address is refused by
+C2 before the browser moves — they see an error page on an unfamiliar host,
+and because our own session was already revoked, retrying gets them nowhere.
+Set `CC_C2_PORTAL_POST_LOGOUT_REDIRECT_URL` and register it.
+
+Both are revoked locally first and the C2 hop second, so a citizen whose
+sign-out errors at C2 is still signed out of CityConnect.
 
 ### Locked out of the last administrator account
 
@@ -142,7 +185,7 @@ sees no failure and neither do you. Reproduce it directly:
 
 ```sh
 curl -i -H "Authorization: Bearer <assertion>" \
-  https://<host>/cityconnect/api/citizens/<sub>/status
+  https://services.<host>/api/citizens/<sub>/status
 ```
 
 - `401` — the assertion failed verification. Almost always an `aud` mismatch:
@@ -151,6 +194,19 @@ curl -i -H "Authorization: Bearer <assertion>" \
   citizen with no record; if it is wrong, their contact is missing its C2 identity.
 - Slow — C2's budget is about five seconds and it calls on every render.
   `CC_C2_CALLOUT_CACHE_TTL` is what keeps that cheap.
+- `400` mentioning *"sign-in response was missing its code or state"* — the
+  callout URL has been set to `/api/auth/callback`. That is the redirect URI,
+  a different field: it receives a browser after sign-in and knows nothing
+  about status bundles.
+- Nothing in the log at all — C2 cannot reach the host. Confirm the callout URL
+  is on the public citizen origin and not the API port.
+
+The card can also render correctly and still be broken: **check where its links
+go.** Every link in a bundle — the card's own action and each task — must be on
+the citizen origin, `https://services.<host>/requests/<reference>`. A citizen
+has no staff console account, so a link to the console host ends at a sign-in
+page that refuses them, on a surface the City does not control. Set
+`CC_PORTAL_PUBLIC_URL`; it is what those links are built from.
 
 ### Suspected tampering
 

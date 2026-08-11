@@ -5,6 +5,7 @@ package config
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"strconv"
 	"strings"
@@ -13,10 +14,17 @@ import (
 
 // Config is the fully-resolved application configuration.
 type Config struct {
-	Env             string // dev | staging | prod
-	Addr            string // listen address, e.g. ":4021"
-	BasePath        string // public base path, e.g. "/cityconnect"
-	PublicURL       string // externally reachable base URL of the SPA
+	Env       string // dev | staging | prod
+	Addr      string // listen address, e.g. ":4021"
+	BasePath  string // public base path, e.g. "/cityconnect"
+	PublicURL string // externally reachable base URL of the staff console
+	// PortalPublicURL is the citizen portal's own origin.
+	//
+	// A separate origin, not a path: it gives the public app its own cookie
+	// jar, so script running there has no ambient authority over a staff
+	// session in the same browser. The API is served under both origins, which
+	// keeps each app's calls same-origin and avoids SameSite=None.
+	PortalPublicURL string
 	ShutdownTimeout time.Duration
 
 	DB  DBConfig
@@ -67,10 +75,19 @@ type C2Config struct {
 	ClientID     string
 	ClientSecret string
 	RedirectURL  string
+	// PortalRedirectURL is the callback on the citizen origin. C2 matches
+	// redirect URIs exactly, so a second origin needs its own registration.
+	PortalRedirectURL string
 	// PostLogoutRedirectURL is where C2 sends the browser after RP-initiated
 	// logout. Must be pre-registered; C2 matches redirect URIs exactly.
 	PostLogoutRedirectURL string
-	Scopes                []string
+	// PortalPostLogoutRedirectURL is the same, for the citizen origin. A
+	// citizen signing out must land back on the portal, not on the staff
+	// console — and since C2 matches these exactly, sending the console's
+	// value from the portal is rejected outright rather than merely landing
+	// in the wrong place.
+	PortalPostLogoutRedirectURL string
+	Scopes                      []string
 
 	// PartnerBaseURL is the base for the partner notification API. It is
 	// mounted at <base>/partner, a sibling of the OIDC endpoints and NOT under
@@ -128,16 +145,17 @@ type JobConfig struct {
 func Load() (*Config, error) {
 	c := &Config{
 		Env:  env("CC_ENV", "dev"),
-		Addr: env("CC_ADDR", ":4021"),
+		Addr: env("CC_ADDR", ""),
 		// An explicitly empty base path is meaningful — it deploys at the
 		// root — so it must not fall through to the default the way a blank
 		// value does everywhere else.
 		BasePath:        strings.TrimSuffix(envAllowEmpty("CC_BASE_PATH", "/cityconnect"), "/"),
 		PublicURL:       strings.TrimSuffix(env("CC_PUBLIC_URL", "http://localhost:4021"), "/"),
+		PortalPublicURL: strings.TrimSuffix(env("CC_PORTAL_PUBLIC_URL", ""), "/"),
 		ShutdownTimeout: envDuration("CC_SHUTDOWN_TIMEOUT", 20*time.Second),
 
-		AttachmentDir:      env("CC_ATTACHMENT_DIR", "./data/attachments"),
-		AttachmentMaxMB:    int64(envInt("CC_ATTACHMENT_MAX_MB", 25)),
+		AttachmentDir:        env("CC_ATTACHMENT_DIR", "./data/attachments"),
+		AttachmentMaxMB:      int64(envInt("CC_ATTACHMENT_MAX_MB", 25)),
 		BootstrapAdminSubs:   envList("CC_BOOTSTRAP_ADMIN_SUBS"),
 		BootstrapAdminEmails: envList("CC_BOOTSTRAP_ADMIN_EMAILS"),
 
@@ -150,13 +168,15 @@ func Load() (*Config, error) {
 		},
 
 		C2: C2Config{
-			PortalOrigin:          strings.TrimSuffix(env("CC_C2_PORTAL_ORIGIN", "http://localhost:5173"), "/"),
-			Issuer:                strings.TrimSuffix(env("CC_C2_ISSUER", ""), "/"),
-			ClientID:              env("CC_C2_CLIENT_ID", ""),
-			ClientSecret:          env("CC_C2_CLIENT_SECRET", ""),
-			RedirectURL:           env("CC_C2_REDIRECT_URL", ""),
-			PostLogoutRedirectURL: env("CC_C2_POST_LOGOUT_REDIRECT_URL", ""),
-			Scopes:                envListOr("CC_C2_SCOPES", []string{"openid", "profile", "email"}),
+			PortalOrigin:                strings.TrimSuffix(env("CC_C2_PORTAL_ORIGIN", "http://localhost:5173"), "/"),
+			Issuer:                      strings.TrimSuffix(env("CC_C2_ISSUER", ""), "/"),
+			ClientID:                    env("CC_C2_CLIENT_ID", ""),
+			ClientSecret:                env("CC_C2_CLIENT_SECRET", ""),
+			RedirectURL:                 env("CC_C2_REDIRECT_URL", ""),
+			PortalRedirectURL:           env("CC_C2_PORTAL_REDIRECT_URL", ""),
+			PostLogoutRedirectURL:       env("CC_C2_POST_LOGOUT_REDIRECT_URL", ""),
+			PortalPostLogoutRedirectURL: env("CC_C2_PORTAL_POST_LOGOUT_REDIRECT_URL", ""),
+			Scopes:                      envListOr("CC_C2_SCOPES", []string{"openid", "profile", "email"}),
 
 			PartnerBaseURL:      strings.TrimSuffix(env("CC_C2_PARTNER_BASE_URL", ""), "/"),
 			NotifyAudience:      env("CC_C2_NOTIFY_AUDIENCE", ""),
@@ -197,6 +217,21 @@ func Load() (*Config, error) {
 		},
 	}
 
+	// Production binds loopback. Everything C2 and every browser reaches goes
+	// through Apache, which proxies to 127.0.0.1 on the same host, so the
+	// listening port has no reason to be reachable from anywhere else — and
+	// the security of the two-origin split assumes exactly that.
+	//
+	// Development binds all interfaces, so the console can be opened from a
+	// phone on the same network to check how a form behaves on a real device.
+	if c.Addr == "" {
+		if c.IsProd() {
+			c.Addr = "127.0.0.1:4021"
+		} else {
+			c.Addr = ":4021"
+		}
+	}
+
 	// The issuer defaults to the portal origin plus /oidc. Configuring it as
 	// the internal API host is the classic `iss` mismatch: discovery still
 	// works, then every token fails validation.
@@ -208,6 +243,18 @@ func Load() (*Config, error) {
 	}
 	if c.C2.PostLogoutRedirectURL == "" {
 		c.C2.PostLogoutRedirectURL = c.PublicURL + c.BasePath + "/"
+	}
+	// Without a distinct portal origin the two apps share one, which is the
+	// single-app arrangement: the portal keeps working, it simply does not get
+	// its own cookie jar.
+	if c.PortalPublicURL == "" {
+		c.PortalPublicURL = c.PublicURL + c.BasePath
+	}
+	if c.C2.PortalRedirectURL == "" {
+		c.C2.PortalRedirectURL = c.PortalPublicURL + "/api/auth/callback"
+	}
+	if c.C2.PortalPostLogoutRedirectURL == "" {
+		c.C2.PortalPostLogoutRedirectURL = c.PortalPublicURL + "/"
 	}
 	if c.C2.PartnerBaseURL == "" {
 		c.C2.PartnerBaseURL = c.C2.PortalOrigin
@@ -259,6 +306,29 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("invalid configuration:\n  - %s", strings.Join(problems, "\n  - "))
 	}
 	return nil
+}
+
+// PubliclyBound reports whether the listener accepts connections from beyond
+// this host.
+//
+// It is not an error — a container or a deployment behind an external load
+// balancer must bind an outward interface, and refusing to start would be
+// wrong. It is worth saying out loud at boot, because the arrangement this
+// system relies on puts Apache in front of everything.
+func (c *Config) PubliclyBound() bool {
+	host, _, err := net.SplitHostPort(c.Addr)
+	if err != nil {
+		// Unparseable. Report the worse case rather than staying quiet about an
+		// address nobody can reason about.
+		return true
+	}
+	if host == "localhost" {
+		return false
+	}
+	// An empty host, 0.0.0.0 or :: all mean every interface. Any other address
+	// is a specific interface, which is only loopback if it says so.
+	ip := net.ParseIP(host)
+	return ip == nil || !ip.IsLoopback()
 }
 
 // IsProd reports whether this is a non-development deployment.

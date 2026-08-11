@@ -5,8 +5,12 @@ them through to resolution, and connected line-of-business systems participate a
 first-class agents.
 
 CityConnect is a downstream relying party of **C2 (TrustIdentity)**, the citizen
-identity portal. Citizens never sign into CityConnect directly — they meet it
-through a C2 Service Card, through a connected system, or by talking to an agent.
+identity portal.
+
+It is **two web applications over one API**: a staff console where agents work
+tickets, and a public citizen portal where residents report problems and follow
+them. They are separate builds on separate origins — a resident never downloads
+admin code, and the two never share a cookie jar.
 
 ---
 
@@ -18,8 +22,13 @@ through a C2 Service Card, through a connected system, or by talking to an agent
   detection and a reversible merge.
 - **Interactions** — calls, emails, counter visits — on one timeline with request
   activity.
+- **A citizen portal** with a service catalogue, self-service reporting, progress
+  tracking, replies, withdrawal and satisfaction ratings — isolated from the
+  console by origin, session table and cookie.
 - **Four C2 integration edges**: staff SSO, the inbound Service Card callout,
   outbound citizen notifications, and back-channel logout.
+- **Idempotent writes** — `Idempotency-Key` on any mutating request, so a partner
+  retry never files a duplicate work order.
 - **Connected systems** that own requests and receive signed event webhooks with
   retry and a dead-letter queue.
 - **Reporting** on volume, service levels, workload and geography, with CSV export.
@@ -28,8 +37,9 @@ through a C2 Service Card, through a connected system, or by talking to an agent
 ## Stack
 
 Go 1.25 · chi · GORM · MariaDB · React 18 · TypeScript · Vite · TanStack Query ·
-Tailwind. The API listens on **:4021**; Apache serves the SPA and reverse-proxies
-`/cityconnect/api` to it.
+Tailwind. The API listens on **:4021**. Apache serves both apps and proxies
+`/api` on **each** origin — which is what keeps every call same-origin and both
+session cookies `SameSite=Lax`.
 
 ---
 
@@ -53,7 +63,7 @@ Then everything else is one command:
 
 | Command | |
 | --- | --- |
-| `./scripts/dev.sh start [svc]` | Start all, or one of `stub` `api` `web` |
+| `./scripts/dev.sh start [svc]` | Start all, or one of `stub` `api` `web` `portal` |
 | `./scripts/dev.sh stop` | Stop, in reverse dependency order |
 | `./scripts/dev.sh restart api` | After a Go change |
 | `./scripts/dev.sh status` | What is running — and who holds a port if we cannot |
@@ -62,9 +72,18 @@ Then everything else is one command:
 | `./scripts/dev.sh demo` | Add a sample contact and request |
 | `./scripts/dev.sh reset` | Drop and recreate the database (confirms first) |
 
-The console is on **:5174**, the API on **:4021**, the C2 stub on **:5273**. Sign
-in as `staff-boss` — the bootstrap grant makes it an administrator. Logs and pid
-files live in `.dev/`; override any port or credential in `scripts/dev.env`.
+| | |
+| --- | --- |
+| Staff console | **:5174** |
+| Citizen portal | **:5176** |
+| API | **:4021** |
+| C2 stub | **:5273** |
+
+Sign in as `staff-boss` — the bootstrap grant makes it an administrator. Logs and
+pid files live in `.dev/`; override any port or credential in `scripts/dev.env`.
+
+The portal is a distinct origin on purpose, locally as well as in production, so
+the cookie isolation is exercised in development rather than assumed.
 
 If something is wrong, `doctor` is the first stop: it checks the tooling, the
 database credentials, every port, and the `:5173` collision described below.
@@ -127,14 +146,18 @@ and the audit chain.
 
 ```
 cmd/server          the API
-cmd/ccadm           operator CLI — bootstrap, tokens, audit verification, break-glass
+cmd/ccadm           operator CLI — bootstrap, invites, tokens, audit verification
 cmd/c2stub          the local C2 stand-in
 internal/domain     GORM models
 internal/c2/…       oidc (discovery, JWKS, token verification), callout, notify
+internal/portal     citizen-facing service layer, scoped to one contact
 internal/…          service packages: agents, contacts, requests, routing, catalog, …
 internal/httpapi    router, middleware, handlers
-web/                the console
-deployment/         deploy.sh, systemd unit, Apache config, env example
+web/                staff console
+web-portal/         citizen portal (separate origin)
+shared/ui/          design tokens and primitives used by both apps
+scripts/dev.sh      development environment manager
+deployment/         deploy.sh, systemd unit, two Apache vhosts, env example
 docs/               OpenAPI spec and the operations runbook
 build_docs/         the source integration guides and the build plan
 ```
@@ -162,12 +185,20 @@ recovery procedures.
 
 ---
 
-## Two things worth knowing before you change anything
+## Three things worth knowing before you change anything
 
 **The C2 issuer is the portal origin.** Not C2's internal API host, even though
 discovery is served from there and appears to work. Configure it wrongly and every
 token fails validation with an error that points nowhere useful. `ccadm check-c2`
 prints exactly what was resolved.
+
+**The two web apps must stay on separate origins.** That is not cosmetic. A
+shared origin is a shared cookie jar, so script on the public site could call
+staff endpoints using a staff member's ambient authority. Cookie `Path` scoping
+does not help — `HttpOnly` stops script *reading* a cookie, but the browser
+still attaches it to any same-origin request. The server-side boundary
+(separate session table, separate cookie, service-layer scoping) is tested and
+holds regardless; the origin split is what removes the escalation path.
 
 **Never send `prompt=login` or `max_age=0`** on the authorization request. Either
 makes C2 re-prompt for credentials on every visit even with an active session,

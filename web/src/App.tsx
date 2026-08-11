@@ -1,8 +1,14 @@
+import { useEffect } from "react";
 import { Navigate, Route, Routes } from "react-router-dom";
 
 import { AuthProvider, useAuth } from "@/hooks/useAuth";
+import { api } from "@/lib/api";
 import { Shell } from "@/components/Shell";
+import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { Spinner } from "@/components/ui";
+
+// One-shot guard, per tab, so a failed silent SSO cannot loop.
+const SILENT_SSO_TRIED = "cc.silentSsoTried";
 
 import Login from "@/pages/Login";
 import Dashboard from "@/pages/Dashboard";
@@ -27,12 +33,20 @@ export default function App() {
 /**
  * Protected gates every console route on an established session.
  *
- * There is no local-account fallback by design, so an unauthenticated visitor
- * always ends up at the sign-in page, which explains the C2 dependency rather
- * than showing a bare form.
+ * An unauthenticated visitor may still hold a live C2 session, so we first try
+ * a silent (prompt=none) SSO: if C2 recognises them they are carried straight
+ * in without ever seeing a screen. Only when C2 answers "no session" — which
+ * lands the callback on /login, outside this component — does the sign-in page
+ * appear. A per-tab guard makes the probe a one-shot, so it cannot loop.
  */
 function Protected() {
   const { me, loading } = useAuth();
+
+  // Once a session is established, reset the guard so a later sign-out can
+  // probe again on the next visit.
+  useEffect(() => {
+    if (me?.user) sessionStorage.removeItem(SILENT_SSO_TRIED);
+  }, [me]);
 
   if (loading) {
     return (
@@ -42,11 +56,23 @@ function Protected() {
     );
   }
   if (!me?.user) {
+    if (!sessionStorage.getItem(SILENT_SSO_TRIED)) {
+      sessionStorage.setItem(SILENT_SSO_TRIED, "1");
+      // Full-page navigation: the authorization flow is a browser redirect
+      // through C2 and back. replace() keeps it out of history.
+      window.location.replace(api.loginUrl({ silent: true }));
+      return (
+        <div className="flex h-screen items-center justify-center">
+          <Spinner label="Signing you in" />
+        </div>
+      );
+    }
     return <Navigate to="/login" replace />;
   }
 
   return (
     <Shell>
+      <ErrorBoundary area="page">
       <Routes>
         <Route path="/" element={<Dashboard />} />
         <Route path="/requests" element={<RequestList />} />
@@ -57,6 +83,7 @@ function Protected() {
         <Route path="/admin/*" element={<Admin />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
+      </ErrorBoundary>
     </Shell>
   );
 }

@@ -30,6 +30,7 @@ import (
 	"github.com/jjamieson1/CityConnect/internal/httpapi"
 	"github.com/jjamieson1/CityConnect/internal/interactions"
 	"github.com/jjamieson1/CityConnect/internal/notifications"
+	"github.com/jjamieson1/CityConnect/internal/portal"
 	"github.com/jjamieson1/CityConnect/internal/reports"
 	"github.com/jjamieson1/CityConnect/internal/requests"
 	"github.com/jjamieson1/CityConnect/internal/routing"
@@ -51,6 +52,13 @@ type env struct {
 }
 
 func newEnv(t *testing.T) *env {
+	t.Helper()
+	return newEnvWith(t, true)
+}
+
+// newEnvWith builds the environment, optionally skipping the baseline seed so
+// a test can exercise a genuinely empty database.
+func newEnvWith(t *testing.T, withSeed bool) *env {
 	t.Helper()
 
 	stub, err := c2stub.New(c2stub.Options{ClientID: "cityconnect-test", ClientSecret: "shh"})
@@ -76,8 +84,13 @@ func newEnv(t *testing.T) *env {
 
 	cfg := &config.Config{
 		Env: "test", Addr: ":0", BasePath: "",
-		PublicURL:     apiSrv.URL,
-		AttachmentDir: t.TempDir(), AttachmentMaxMB: 5,
+		PublicURL: apiSrv.URL,
+		// A distinct origin from PublicURL, as in production — the citizen
+		// portal is its own host. Anything built for citizens (callout links,
+		// notification links) must come from here, and a fixture that shared
+		// one origin could not tell the two apart.
+		PortalPublicURL: "https://portal.test",
+		AttachmentDir:   t.TempDir(), AttachmentMaxMB: 5,
 		Sec: config.SecurityConfig{
 			SessionCookieName: "cc_session",
 			SessionTTL:        8 * time.Hour, SessionIdleTTL: 2 * time.Hour,
@@ -88,11 +101,14 @@ func newEnv(t *testing.T) *env {
 			PortalOrigin: stubSrv.URL, Issuer: stubSrv.URL + "/oidc",
 			ClientID: "cityconnect-test", ClientSecret: "shh",
 			RedirectURL:           apiSrv.URL + "/api/auth/callback",
+			PortalRedirectURL:     apiSrv.URL + "/api/auth/callback",
 			PostLogoutRedirectURL: apiSrv.URL + "/",
-			Scopes:                []string{"openid", "profile", "email"},
-			PartnerBaseURL:        stubSrv.URL,
-			NotifyAudience:        stubSrv.URL,
-			DiscoveryCacheTTL:     time.Minute, HTTPTimeout: 5 * time.Second,
+			// The portal returns to its own origin, as in production.
+			PortalPostLogoutRedirectURL: "https://portal.test/",
+			Scopes:                      []string{"openid", "profile", "email"},
+			PartnerBaseURL:              stubSrv.URL,
+			NotifyAudience:              stubSrv.URL,
+			DiscoveryCacheTTL:           time.Minute, HTTPTimeout: 5 * time.Second,
 			ClockSkew: time.Minute, CalloutMaxTasks: 10,
 			CalloutCacheTTL: 0, // disabled so assertions see fresh data
 		},
@@ -118,14 +134,17 @@ func newEnv(t *testing.T) *env {
 	requestSvc.SetWebhooks(webhookSvc)
 
 	calloutSvc := callout.NewService(db, cfg, provider, contactSvc, requestSvc, log)
+	portalSvc := portal.NewService(db, cfg, provider, contactSvc, catalogSvc, requestSvc, auditSvc, log)
 	attachments, err := requests.NewAttachmentStore(cfg.AttachmentDir, 5, nil)
 	if err != nil {
 		t.Fatalf("attachments: %v", err)
 	}
 
 	ctx := context.Background()
-	if err := seed.Run(ctx, db, cfg, log); err != nil {
-		t.Fatalf("seed: %v", err)
+	if withSeed {
+		if err := seed.Run(ctx, db, cfg, log); err != nil {
+			t.Fatalf("seed: %v", err)
+		}
 	}
 
 	api := httpapi.New(httpapi.Deps{
@@ -133,7 +152,7 @@ func newEnv(t *testing.T) *env {
 		Agents: agentSvc, Audit: auditSvc, Contacts: contactSvc,
 		Interactions: interactionSvc, Catalog: catalogSvc, Routing: routingSvc,
 		Requests: requestSvc, Notifications: notificationSvc, Webhooks: webhookSvc,
-		Reports: reportSvc, Callout: calloutSvc, Attachments: attachments,
+		Reports: reportSvc, Callout: calloutSvc, Portal: portalSvc, Attachments: attachments,
 	})
 
 	handler = api.Handler()
@@ -141,7 +160,7 @@ func newEnv(t *testing.T) *env {
 	jar, _ := cookiejar.New(nil)
 	return &env{
 		t: t, api: apiSrv, stub: stub, stubSrv: stubSrv, db: db,
-		client: &http.Client{Jar: jar, Timeout: 10 * time.Second},
+		client:   &http.Client{Jar: jar, Timeout: 10 * time.Second},
 		notifier: notificationSvc, cfg: cfg,
 	}
 }
@@ -159,7 +178,13 @@ func (e *env) signIn(sub, email string, role domain.Role) {
 	if err := e.db.Create(u).Error; err != nil {
 		e.t.Fatalf("seed user: %v", err)
 	}
+	e.stub.SignOutAll()
 	e.stub.SignIn(sub)
+
+	// A fresh jar per sign-in: /auth/login short-circuits when a session is
+	// already present, so reusing the jar would silently keep the previous user.
+	jar, _ := cookiejar.New(nil)
+	e.client.Jar = jar
 
 	resp, err := e.client.Get(e.api.URL + "/api/auth/login")
 	if err != nil {
@@ -217,7 +242,7 @@ func (e *env) do(method, path string, body, out any) int {
 	return resp.StatusCode
 }
 
-func (e *env) get(path string, out any) int  { return e.do(http.MethodGet, path, nil, out) }
+func (e *env) get(path string, out any) int { return e.do(http.MethodGet, path, nil, out) }
 func (e *env) post(path string, body, out any) int {
 	return e.do(http.MethodPost, path, body, out)
 }
@@ -446,8 +471,10 @@ func TestCalloutServesStatusBundle(t *testing.T) {
 	if !strings.Contains(task.Description, "crew is scheduled") {
 		t.Errorf("task description %q does not include the citizen-visible note", task.Description)
 	}
-	if !strings.HasPrefix(task.URL, "https://") && !strings.HasPrefix(task.URL, "http://") {
-		t.Errorf("task URL %q is not absolute; C2 opens these in a new tab", task.URL)
+	// Absolute, and on the citizen portal's origin — not the staff console's.
+	// C2 opens these in a new tab for a citizen who has no console account.
+	if want := e.cfg.PortalPublicURL + "/requests/" + req.Reference; task.URL != want {
+		t.Errorf("task URL = %q, want %q", task.URL, want)
 	}
 	if bundle.Description == "" {
 		t.Error("bundle has no description")
@@ -635,8 +662,8 @@ func TestAuditChainVerifies(t *testing.T) {
 	e.seedRequest(t)
 
 	var res struct {
-		Valid    bool  `json:"valid"`
-		Checked  int64 `json:"checked"`
+		Valid    bool   `json:"valid"`
+		Checked  int64  `json:"checked"`
 		BrokenAt uint64 `json:"brokenAtSeq"`
 	}
 	if code := e.get("/api/audit/verify", &res); code != 200 {

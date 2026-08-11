@@ -173,6 +173,19 @@ func (s *Server) SignIn(sub string) {
 	}
 }
 
+// SignOutAll clears every stub session.
+//
+// The authorize endpoint completes silently for whichever subject holds a
+// session, and with more than one it picks arbitrarily by map iteration. A
+// test that signs in a citizen and then a staff member would otherwise
+// authenticate as whichever Go happened to yield — an intermittent failure
+// that looks like a bug in the application rather than in the stub.
+func (s *Server) SignOutAll() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.sessions = map[string]bool{}
+}
+
 // defaultProfile is the identity the stub asserts for a subject that arrived
 // without one (silent SSO or a programmatic SignIn), matching the shape C2
 // would release under the profile/email scopes.

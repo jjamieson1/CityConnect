@@ -339,8 +339,31 @@ func TestEndSessionURLCarriesHintAndRedirect(t *testing.T) {
 	if q.Get("id_token_hint") != "the-id-token" {
 		t.Errorf("id_token_hint = %q", q.Get("id_token_hint"))
 	}
-	if q.Get("post_logout_redirect_uri") == "" {
-		t.Error("post_logout_redirect_uri missing; C2 needs a registered target")
+	if want := "http://localhost:4021/cityconnect/"; q.Get("post_logout_redirect_uri") != want {
+		t.Errorf("post_logout_redirect_uri = %q, want the console's %q",
+			q.Get("post_logout_redirect_uri"), want)
+	}
+}
+
+// A citizen signing out of the portal must return to the portal. C2 matches
+// post_logout_redirect_uri exactly, so sending the console's value from the
+// portal is rejected outright — the citizen sees a C2 error page rather than a
+// signed-out portal, and their session on our side is already gone.
+func TestEndSessionURLForUsesTheGivenReturnAddress(t *testing.T) {
+	p, _, _ := newTestProvider(t)
+
+	const portal = "https://services.example.gov/"
+	got, err := p.EndSessionURLFor(context.Background(), "the-id-token", portal)
+	if err != nil {
+		t.Fatalf("end session url: %v", err)
+	}
+	q, _ := url.Parse(got)
+	if q.Query().Get("post_logout_redirect_uri") != portal {
+		t.Errorf("post_logout_redirect_uri = %q, want %q",
+			q.Query().Get("post_logout_redirect_uri"), portal)
+	}
+	if q.Query().Get("id_token_hint") != "the-id-token" {
+		t.Error("id_token_hint was dropped")
 	}
 }
 

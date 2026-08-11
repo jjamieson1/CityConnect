@@ -273,3 +273,17 @@ func queryUint(r *http.Request, key string) uint {
 	}
 	return 0
 }
+
+// listing wraps a slice as {"items": …}, guaranteeing an empty array rather
+// than null.
+//
+// A nil slice in Go marshals to JSON `null`, so every list endpoint returned
+// null before it had any data. Clients that iterate the field then throw at
+// exactly the moment there is nothing to show — a fresh deployment — which is
+// the worst possible time for a screen to break.
+func listing[T any](items []T) map[string]any {
+	if items == nil {
+		items = []T{}
+	}
+	return map[string]any{"items": items}
+}
