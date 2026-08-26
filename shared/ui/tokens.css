@@ -161,6 +161,13 @@ body {
 .cc-input::placeholder {
   color: var(--text-muted);
 }
+/* A native select ignores line-height — the UA stylesheet forces `normal` — so
+   the same padding leaves it a few pixels shorter than the input beside it in a
+   two-column row. Pin the box to the height the other controls compute to:
+   1.25rem line box + 0.5rem padding top and bottom + the two 1px borders. */
+select.cc-input {
+  height: calc(1.25rem + 1rem + 2px);
+}
 
 .cc-label {
   display: block;

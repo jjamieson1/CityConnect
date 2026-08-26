@@ -166,3 +166,56 @@ func TestPubliclyBound(t *testing.T) {
 		}
 	}
 }
+
+// C2 exact-matches post_logout_redirect_uri against its registration list, so
+// a value we invent is one nobody registered: C2 answers
+// `post_logout_redirect_uri invalid` and the user is stranded mid-sign-out.
+//
+// Deriving these the way redirect URIs are derived was exactly that bug. The
+// difference is when it surfaces — a wrong redirect_uri stops sign-in, so it
+// is fixed during setup; a wrong post-logout URI breaks nothing until the
+// first person signs out of an apparently healthy deployment.
+func TestPostLogoutRedirectsAreNotDerived(t *testing.T) {
+	t.Setenv("CC_PUBLIC_URL", "https://city.example.gov")
+	t.Setenv("CC_PORTAL_PUBLIC_URL", "https://services.example.gov")
+	t.Setenv("CC_C2_PORTAL_ORIGIN", "https://portal.example.gov/c2")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+
+	if cfg.C2.PostLogoutRedirectURL != "" {
+		t.Errorf("PostLogoutRedirectURL = %q, want empty until registered with C2",
+			cfg.C2.PostLogoutRedirectURL)
+	}
+	if cfg.C2.PortalPostLogoutRedirectURL != "" {
+		t.Errorf("PortalPostLogoutRedirectURL = %q, want empty until registered with C2",
+			cfg.C2.PortalPostLogoutRedirectURL)
+	}
+
+	// The redirect URIs are still derived: sign-in fails loudly, so a wrong
+	// value is found immediately rather than lying in wait.
+	if cfg.C2.RedirectURL == "" || cfg.C2.PortalRedirectURL == "" {
+		t.Error("redirect URIs should still be derived")
+	}
+}
+
+func TestPostLogoutRedirectsAreUsedWhenSet(t *testing.T) {
+	t.Setenv("CC_PUBLIC_URL", "https://city.example.gov")
+	t.Setenv("CC_PORTAL_PUBLIC_URL", "https://services.example.gov")
+	t.Setenv("CC_C2_PORTAL_ORIGIN", "https://portal.example.gov/c2")
+	t.Setenv("CC_C2_POST_LOGOUT_REDIRECT_URL", "https://city.example.gov/cityconnect/")
+	t.Setenv("CC_C2_PORTAL_POST_LOGOUT_REDIRECT_URL", "https://services.example.gov/")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if want := "https://city.example.gov/cityconnect/"; cfg.C2.PostLogoutRedirectURL != want {
+		t.Errorf("PostLogoutRedirectURL = %q, want %q", cfg.C2.PostLogoutRedirectURL, want)
+	}
+	if want := "https://services.example.gov/"; cfg.C2.PortalPostLogoutRedirectURL != want {
+		t.Errorf("PortalPostLogoutRedirectURL = %q, want %q", cfg.C2.PortalPostLogoutRedirectURL, want)
+	}
+}

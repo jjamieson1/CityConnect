@@ -133,7 +133,7 @@ func newEnvWith(t *testing.T, withSeed bool) *env {
 	requestSvc.SetNotifier(notificationSvc)
 	requestSvc.SetWebhooks(webhookSvc)
 
-	calloutSvc := callout.NewService(db, cfg, provider, contactSvc, requestSvc, log)
+	calloutSvc := callout.NewService(db, cfg, provider, contactSvc, catalogSvc, requestSvc, log)
 	portalSvc := portal.NewService(db, cfg, provider, contactSvc, catalogSvc, requestSvc, auditSvc, log)
 	attachments, err := requests.NewAttachmentStore(cfg.AttachmentDir, 5, nil)
 	if err != nil {
@@ -461,12 +461,23 @@ func TestCalloutServesStatusBundle(t *testing.T) {
 
 	bundle := e.callout(t, "citizen-001", assertion)
 
-	if len(bundle.Tasks) != 1 {
-		t.Fatalf("bundle has %d tasks, want 1: %+v", len(bundle.Tasks), bundle)
+	// The card carries the citizen's open request plus the ways to start a new
+	// one, so find the request row rather than assuming it is alone.
+	var task callout.Task
+	var browse bool
+	for _, row := range bundle.Tasks {
+		switch {
+		case strings.Contains(row.Name, req.Reference):
+			task = row
+		case row.Name == "Browse all city services":
+			browse = true
+		}
 	}
-	task := bundle.Tasks[0]
-	if !strings.Contains(task.Name, req.Reference) {
-		t.Errorf("task name %q does not carry the reference", task.Name)
+	if task.Name == "" {
+		t.Fatalf("no row for %s: %+v", req.Reference, bundle)
+	}
+	if !browse {
+		t.Errorf("the card offered no way to report something new: %+v", bundle.Tasks)
 	}
 	if !strings.Contains(task.Description, "crew is scheduled") {
 		t.Errorf("task description %q does not include the citizen-visible note", task.Description)

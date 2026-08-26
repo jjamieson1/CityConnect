@@ -5,6 +5,42 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="color-scheme" content="light dark" />
     <title>CityConnect</title>
+    <script>
+      /*
+       * Apply the theme before the first paint. Without this, a machine set to
+       * dark renders dark for the moment before React mounts and then snaps to
+       * light, which reads as a rendering fault rather than a theme.
+       *
+       * Light is the default, matching ThemeToggle in Shell.tsx — the two must
+       * agree or every load flashes. "system" deliberately stamps nothing,
+       * leaving the page to the prefers-color-scheme rule.
+       *
+       * The one-time migration exists because the previous build defaulted to
+       * "system" AND wrote it to storage on first mount. Every existing user
+       * therefore has "system" stored whether or not they ever chose it, so
+       * changing the default alone would move nobody. This resets that stored
+       * value once, then records that it has done so — a "system" chosen after
+       * this point is a real preference and is left alone.
+       */
+      (function () {
+        var KEY = "cc-theme";
+        var MIGRATED = "cc-theme-default-light";
+        var theme = "light";
+        try {
+          theme = localStorage.getItem(KEY) || "light";
+          if (!localStorage.getItem(MIGRATED)) {
+            localStorage.setItem(MIGRATED, "1");
+            if (theme === "system") theme = "light";
+            localStorage.setItem(KEY, theme);
+          }
+        } catch (e) {
+          /* Storage can be blocked outright; the default still applies. */
+        }
+        if (theme !== "system") {
+          document.documentElement.setAttribute("data-theme", theme);
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

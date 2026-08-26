@@ -60,3 +60,63 @@ func (e *env) lookupByReference(reference string) (*domain.Request, error) {
 	err := e.db.Where("reference = ?", reference).First(&req).Error
 	return &req, err
 }
+
+// rawGet returns the response body verbatim alongside the status, for
+// assertions that two refusals are byte-identical.
+func rawGet(t *testing.T, client *http.Client, url string) (string, int) {
+	t.Helper()
+
+	resp, err := client.Get(url)
+	if err != nil {
+		t.Fatalf("GET %s: %v", url, err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read body: %v", err)
+	}
+	return string(body), resp.StatusCode
+}
+
+// catalogID resolves a service-type code to the id the portal's create
+// endpoint expects, through the public catalogue a citizen would actually use.
+func catalogID(t *testing.T, e *env, client *http.Client, code string) string {
+	t.Helper()
+
+	var catalog struct {
+		Items []struct {
+			ID   string `json:"id"`
+			Code string `json:"code"`
+		} `json:"items"`
+	}
+	if got := doJSON(t, client, http.MethodGet, e.api.URL+"/api/portal/catalog", nil, &catalog); got != 200 {
+		t.Fatalf("catalog -> %d", got)
+	}
+	for _, c := range catalog.Items {
+		if c.Code == code {
+			return c.ID
+		}
+	}
+	t.Fatalf("%s is not in the public catalogue", code)
+	return ""
+}
+
+// scrubProblem removes the fields of a problem document that differ between
+// any two requests — the echoed path and the correlation id — so the rest can
+// be compared for an information leak.
+func scrubProblem(t *testing.T, body string) string {
+	t.Helper()
+
+	var doc map[string]any
+	if err := json.Unmarshal([]byte(body), &doc); err != nil {
+		t.Fatalf("decode problem %q: %v", body, err)
+	}
+	delete(doc, "instance")
+	delete(doc, "requestId")
+
+	out, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatalf("re-encode: %v", err)
+	}
+	return string(out)
+}

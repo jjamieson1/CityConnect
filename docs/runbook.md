@@ -15,7 +15,7 @@ This has the longest lead time and blocks staff sign-in entirely. Send it first.
 | **`client_id`** | The `aud` on every token we verify. |
 | **`client_secret`** | Server-side client authentication (unless using private-key JWT only). |
 | **Registered `redirect_uri`s** | Exact-match. Register *every* environment variant, including local dev. A trailing slash is a different URI. **Two per environment**: one for the staff console's origin and one for the citizen portal's, because they are separate hosts. |
-| **Registered `post_logout_redirect_uri`s** | Also exact-match, and also **two per environment** — the console's base path and the portal's root. Easy to forget, because sign-*in* works perfectly without it and only sign-out breaks. |
+| **Registered `post_logout_redirect_uri`s** | Optional. Ask for two per environment — the console's base path and the portal's root — and set them *only once registered*. Unset, sign-out still works and ends on C2's own page. |
 | **Allowed scopes** | We request `openid profile email`. |
 | **Callout URL + auth mode** | Give them `https://services.<host>/api/citizens/{sub}/status` and ask for **`signed_jwt`**. |
 | **`backchannel_logout_uri`** | Register `https://services.<host>/api/c2/backchannel-logout`. Not advertised in discovery — it must be arranged deliberately. |
@@ -137,22 +137,33 @@ sudo -u cityconnect /opt/cityconnect/bin/ccadm check-c2
 | Users are asked for their password every visit | Something is sending `prompt=login` or `max_age=0`. CityConnect never does — check whether a proxy or a C2-side client setting is adding it. |
 | `502` from Apache, nothing in the API log | Apache cannot reach `127.0.0.1:4021`. Either the service is down (`systemctl status cityconnect-api`) or `CC_ADDR` was set to an address Apache is not proxying to. |
 
-### Signing out fails, or lands on the wrong app
+### `post_logout_redirect_uri invalid` on sign-out
 
-Sign-in and sign-out are registered separately in C2, so one can work while the
-other does not. Both surfaces have their own return address:
+C2 exact-matches this against its registration list, so it rejects any value
+that was not registered — including a correct-looking one. **Unset the variable
+and sign-out starts working immediately**, ending on C2's own signed-out page:
 
-| Surface | `post_logout_redirect_uri` |
+```sh
+# in /opt/cityconnect/cityconnect.env
+# CC_C2_POST_LOGOUT_REDIRECT_URL=...
+# CC_C2_PORTAL_POST_LOGOUT_REDIRECT_URL=...
+```
+
+To land the browser back on CityConnect instead, have the C2 administrator
+register these exact strings and then set the matching variable:
+
+| Surface | Register and set |
 | --- | --- |
-| Staff console | `https://city.<host>/cityconnect/` |
-| Citizen portal | `https://services.<host>/` |
+| Staff console | `https://city.<host>/cityconnect/` → `CC_C2_POST_LOGOUT_REDIRECT_URL` |
+| Citizen portal | `https://services.<host>/` → `CC_C2_PORTAL_POST_LOGOUT_REDIRECT_URL` |
 
-C2 matches these exactly. A citizen sent to the console's address is refused by
-C2 before the browser moves — they see an error page on an unfamiliar host,
-and because our own session was already revoked, retrying gets them nowhere.
-Set `CC_C2_PORTAL_POST_LOGOUT_REDIRECT_URL` and register it.
+**One per origin.** A citizen returned to the console gets a staff sign-in page
+that refuses them, and C2 rejects the mismatched URI before that anyway. This
+is why sign-out can break on a deployment where sign-in has worked for months:
+the two are registered separately, and nothing exercises sign-out until
+somebody uses it.
 
-Both are revoked locally first and the C2 hop second, so a citizen whose
+Either way the local session is revoked before the C2 hop, so a user whose
 sign-out errors at C2 is still signed out of CityConnect.
 
 ### Locked out of the last administrator account
@@ -190,6 +201,10 @@ curl -i -H "Authorization: Bearer <assertion>" \
 
 - `401` — the assertion failed verification. Almost always an `aud` mismatch:
   C2 is signing for a different `client_id` than the one configured here.
+- Only "Browse all city services" appears, with no named shortcuts — every code
+  in `CC_C2_CALLOUT_QUICK_LINKS` was skipped. They are checked against the live
+  catalogue, so this means unknown, retired, or not publicly visible. The API
+  log names each one; Admin → Catalogue shows what is available.
 - `200 {}` — CityConnect does not know that subject. Correct behaviour for a
   citizen with no record; if it is wrong, their contact is missing its C2 identity.
 - Slow — C2's budget is about five seconds and it calls on every render.
