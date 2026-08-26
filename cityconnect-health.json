@@ -1,0 +1,186 @@
+{
+  "app": {
+    "description": "City services portal (C2 SSO client)",
+    "name": "CityConnect"
+  },
+  "compliance": {
+    "asvsLevel": "L2",
+    "conformance": null,
+    "note": "OWASP ASVS Level 2 — handles resident personal data; authenticates via C2 SSO (OIDC client).",
+    "requirements": [
+      {
+        "id": "V2 Authentication",
+        "name": "Login via C2 SSO (OIDC client)",
+        "coverage": "automated",
+        "evidence": "c2/oidc verification tests"
+      },
+      {
+        "id": "V3 Session Management",
+        "name": "Secure session cookies + CSRF",
+        "coverage": "automated",
+        "evidence": "session tests"
+      },
+      {
+        "id": "V4 Access Control",
+        "name": "Resident / staff authorization",
+        "coverage": "automated",
+        "evidence": "access-control tests"
+      },
+      {
+        "id": "V7 Errors \u0026 Logging",
+        "name": "Tamper-evident audit trail",
+        "coverage": "automated",
+        "evidence": "verify-audit; audit tests"
+      },
+      {
+        "id": "V14 Configuration",
+        "name": "No committed secrets; dependency hygiene",
+        "coverage": "automated",
+        "evidence": "gitleaks + govulncheck + npm audit"
+      }
+    ],
+    "standards": [
+      {
+        "name": "OWASP Top 10",
+        "note": "Covered by SAST + tests"
+      },
+      {
+        "name": "OWASP ASVS",
+        "note": "Verification checklist — see mapping below"
+      }
+    ]
+  },
+  "security": {
+    "id": "20260825T212705Z",
+    "startedAt": "2026-08-25T21:27:05Z",
+    "gitSha": "c0f5138",
+    "gitBranch": "main",
+    "trigger": "manual",
+    "checks": [
+      {
+        "key": "build",
+        "name": "Compile",
+        "category": "Quality",
+        "tool": "go",
+        "gating": true,
+        "command": "go build ./...",
+        "parser": "exit",
+        "status": "pass",
+        "summary": "passed",
+        "findings": 0,
+        "reportFile": "runs/20260825T212705Z/build.txt",
+        "durationMs": 3303
+      },
+      {
+        "key": "vet",
+        "name": "go vet",
+        "category": "Quality",
+        "tool": "go",
+        "gating": true,
+        "command": "go vet ./...",
+        "parser": "exit",
+        "status": "pass",
+        "summary": "passed",
+        "findings": 0,
+        "reportFile": "runs/20260825T212705Z/vet.txt",
+        "durationMs": 715
+      },
+      {
+        "key": "tests",
+        "name": "Go tests",
+        "category": "Quality",
+        "tool": "go test",
+        "gating": true,
+        "command": "go test ./... -count=1",
+        "parser": "gotest",
+        "status": "pass",
+        "summary": "passed",
+        "findings": 0,
+        "reportFile": "runs/20260825T212705Z/tests.txt",
+        "durationMs": 6440
+      },
+      {
+        "key": "web-lint",
+        "name": "SPA lint",
+        "category": "Quality",
+        "tool": "npm",
+        "gating": false,
+        "command": "npm run lint",
+        "parser": "exit",
+        "dir": "web",
+        "status": "pass",
+        "summary": "passed",
+        "findings": 0,
+        "reportFile": "runs/20260825T212705Z/web-lint.txt",
+        "durationMs": 2462
+      },
+      {
+        "key": "govulncheck",
+        "name": "Go dependency CVEs",
+        "category": "Dependencies",
+        "tool": "govulncheck",
+        "gating": true,
+        "command": "govulncheck ./...",
+        "parser": "govulncheck",
+        "installHint": "go install golang.org/x/vuln/cmd/govulncheck@latest",
+        "status": "pass",
+        "summary": "no known vulnerable dependencies called",
+        "findings": 0,
+        "reportFile": "runs/20260825T212705Z/govulncheck.txt",
+        "durationMs": 4654
+      },
+      {
+        "key": "gosec",
+        "name": "Go SAST",
+        "category": "SAST",
+        "tool": "gosec",
+        "gating": false,
+        "command": "gosec -fmt=json ./internal/... ./cmd/...",
+        "parser": "gosec-json",
+        "installHint": "go install github.com/securego/gosec/v2/cmd/gosec@latest",
+        "status": "pass",
+        "summary": "0 issues",
+        "findings": 0,
+        "reportFile": "runs/20260825T212705Z/gosec.txt",
+        "durationMs": 1937
+      },
+      {
+        "key": "gitleaks",
+        "name": "Secret scan",
+        "category": "Secrets",
+        "tool": "gitleaks",
+        "gating": false,
+        "command": "gitleaks git --no-banner --redact -v",
+        "parser": "gitleaks",
+        "installHint": "brew install gitleaks",
+        "status": "pass",
+        "summary": "no secrets detected",
+        "findings": 0,
+        "reportFile": "runs/20260825T212705Z/gitleaks.txt",
+        "durationMs": 249
+      },
+      {
+        "key": "npm-audit-web",
+        "name": "SPA deps (web)",
+        "category": "Dependencies",
+        "tool": "npm",
+        "gating": false,
+        "command": "npm audit --json",
+        "parser": "npm-audit",
+        "dir": "web",
+        "status": "pass",
+        "summary": "0 critical, 0 high",
+        "findings": 0,
+        "reportFile": "runs/20260825T212705Z/npm-audit-web.txt",
+        "durationMs": 772
+      }
+    ],
+    "totals": {
+      "Pass": 8,
+      "Fail": 0,
+      "Warn": 0,
+      "Skipped": 0,
+      "GatingFail": 0
+    }
+  }
+}

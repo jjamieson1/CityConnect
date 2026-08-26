@@ -1,0 +1,18 @@
+# gitleaks configuration for CityConnect.
+#
+# Extends the default ruleset and allowlists the dev-only C2 OIDC stub, whose
+# handlers return MOCK tokens (e.g. "c2stub-opaque-"+random) — not real
+# credentials. Scoped to devtools/c2stub/ only, so real secrets anywhere else in
+# the repo (and its history) are still caught. Confirmed false positive
+# 2026-08-25 (routes.go:270, generic-api-key).
+
+title = "CityConnect"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Dev-only C2 OIDC stub returns mock tokens, not real credentials."
+paths = [
+  '''devtools/c2stub/.*\.go''',
+]

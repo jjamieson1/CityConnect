@@ -267,7 +267,7 @@ func (s *Server) handleToken(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"access_token": "c2stub-opaque-" + randToken(),
+		"access_token": "c2stub-opaque-" + randToken(), // gitleaks:allow -- dev-only C2 OIDC stub; mock opaque token, not a real credential
 		"id_token":     idToken,
 		"token_type":   "Bearer",
 		"expires_in":   3600,
