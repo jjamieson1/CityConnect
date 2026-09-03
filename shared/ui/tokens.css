@@ -39,8 +39,8 @@
 
   /* Status is reserved: never reused as a series colour, and always shipped
      alongside a label so state is never carried by colour alone. */
-  --status-good: #1a7f4b;
-  --status-warning: #a86800;
+  --status-good: #187d49;    /* 4.50:1 on --status-good-bg; #1a7f4b was 4.44 */
+  --status-warning: #a16100; /* 4.50:1 on --status-warning-bg; #a86800 was 4.11 */
   --status-serious: #c2410c;
   --status-critical: #b91c1c;
 
