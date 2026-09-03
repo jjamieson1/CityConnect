@@ -86,10 +86,18 @@ type MyRequest struct {
 	ResolvedAt  *time.Time `json:"resolvedAt,omitempty"`
 
 	Resolution string `json:"resolution,omitempty"`
-	CanCancel  bool   `json:"canCancel"`
-	CanComment bool   `json:"canComment"`
-	CanRate    bool   `json:"canRate"`
-	CSATScore  *int   `json:"csatScore,omitempty"`
+
+	// Trackable is false for an anonymous report: there is no contact detail to
+	// verify a later lookup against, so nobody — including the person who filed
+	// it — can ask after it again. The confirmation screen has to say so while
+	// the reference is still on screen, because that is the last moment anyone
+	// can act on it.
+	Trackable bool `json:"trackable"`
+
+	CanCancel  bool `json:"canCancel"`
+	CanComment bool `json:"canComment"`
+	CanRate    bool `json:"canRate"`
+	CSATScore  *int `json:"csatScore,omitempty"`
 
 	Updates []MyUpdate `json:"updates,omitempty"`
 }
@@ -145,6 +153,13 @@ func (s *Service) Request(ctx context.Context, contactID, reference string) (*My
 // owns reports whether a request belongs to this contact, following a merge so
 // history survives one.
 func (s *Service) owns(ctx context.Context, contactID string, req *domain.Request) bool {
+	// Nobody owns an anonymous report, and no caller without a contact owns
+	// anything. Both guards matter: without them an empty session id would
+	// compare equal to an anonymous request's empty contact id and hand it to
+	// whoever asked.
+	if contactID == "" || req.Anonymous() {
+		return false
+	}
 	if req.ContactID == contactID {
 		return true
 	}
@@ -176,6 +191,14 @@ func (s *Service) project(r *domain.Request) MyRequest {
 	// The deadline is shown only while it still means something.
 	if r.Status.Open() {
 		view.ExpectedBy = r.DueAt
+	}
+
+	// Every capability below needs somebody to come back as. An anonymous
+	// report has no contact to verify against, so it cannot be tracked, replied
+	// to, withdrawn or rated — by anyone, ourselves included.
+	view.Trackable = r.Contactable()
+	if r.Anonymous() {
+		return view
 	}
 
 	view.CanComment = r.Status.Open()
@@ -259,22 +282,47 @@ type CreateInput struct {
 // portal submission can never be attributed to another resident or dressed up
 // as having arrived through a trusted channel.
 func (s *Service) Create(ctx context.Context, contact *domain.Contact, in CreateInput) (*MyRequest, error) {
-	if strings.TrimSpace(in.ServiceTypeID) == "" {
-		return nil, fmt.Errorf("%w: choose a service", ErrInvalidInput)
-	}
-
-	st, err := s.catalog.GetServiceType(ctx, in.ServiceTypeID)
+	st, err := s.reportableService(ctx, in.ServiceTypeID)
 	if err != nil {
-		return nil, fmt.Errorf("%w: unknown service", ErrInvalidInput)
-	}
-	// Only the public catalogue is reportable. An internal-only service type
-	// must not be filed against just because its id was guessed.
-	if !st.Active || !st.PublicVisible {
-		return nil, fmt.Errorf("%w: that service is not available online", ErrInvalidInput)
+		return nil, err
 	}
 
 	req, err := s.requests.Create(ctx, audit.C2Actor(contact.ID), requests.CreateInput{
-		ContactID: contact.ID, ServiceTypeID: st.ID,
+		ContactID: contact.ID, Channel: domain.ChannelAuthenticated,
+		ServiceTypeID: st.ID,
+		Subject:       in.Subject, Description: in.Description,
+		Address1: in.Address1, City: in.City, PostalCode: in.PostalCode, Ward: in.Ward,
+		FormData: in.FormData,
+		Source:   domain.SourceC2Card,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	view := s.project(req)
+	return &view, nil
+}
+
+// CreateAnonymous files a request for somebody who gave us nothing about
+// themselves.
+//
+// It is the same intake with a deliberately worse deal, and the worse deal is
+// the point: no contact means no confirmation, no updates and no tracking, so
+// giving an email is visibly worth something. What it is not is a lesser
+// report — it is routed, prioritised and worked exactly like any other, because
+// the pothole is the same pothole.
+//
+// There is no contact to attribute the audit entry to, so it is recorded as a
+// system action. Attributing it to a fabricated or shared contact would put a
+// name on a report that was promised not to have one.
+func (s *Service) CreateAnonymous(ctx context.Context, in CreateInput) (*MyRequest, error) {
+	st, err := s.reportableService(ctx, in.ServiceTypeID)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := s.requests.Create(ctx, audit.SystemActor("", "anonymous report", ""), requests.CreateInput{
+		Channel: domain.ChannelAnonymous, ServiceTypeID: st.ID,
 		Subject: in.Subject, Description: in.Description,
 		Address1: in.Address1, City: in.City, PostalCode: in.PostalCode, Ward: in.Ward,
 		FormData: in.FormData,
@@ -286,6 +334,26 @@ func (s *Service) Create(ctx context.Context, contact *domain.Contact, in Create
 
 	view := s.project(req)
 	return &view, nil
+}
+
+// reportableService resolves a service type a member of the public is allowed
+// to file against.
+//
+// Shared by every submission path so the check cannot drift between them: the
+// anonymous route is unauthenticated, and it must not be the one where an
+// internal-only service turns out to be reachable by guessing an id.
+func (s *Service) reportableService(ctx context.Context, serviceTypeID string) (*domain.ServiceType, error) {
+	if strings.TrimSpace(serviceTypeID) == "" {
+		return nil, fmt.Errorf("%w: choose a service", ErrInvalidInput)
+	}
+	st, err := s.catalog.GetServiceType(ctx, serviceTypeID)
+	if err != nil {
+		return nil, fmt.Errorf("%w: unknown service", ErrInvalidInput)
+	}
+	if !st.Active || !st.PublicVisible {
+		return nil, fmt.Errorf("%w: that service is not available online", ErrInvalidInput)
+	}
+	return st, nil
 }
 
 // Comment adds a citizen's reply to their own request.

@@ -66,6 +66,17 @@ func NewService(
 // propagate into the caller's transaction: a request that was successfully
 // created must not be rolled back because a template was missing.
 func (s *Service) QueueForRequest(ctx context.Context, event string, req *domain.Request, extra map[string]string) error {
+	// An anonymous report has nobody to notify, and that is the arrangement the
+	// resident accepted rather than a failure to record.
+	//
+	// Returning before the suppression path matters: a suppression says "we
+	// meant to reach this person and could not", which an operator is expected
+	// to look at. Writing one per event for every anonymous request would bury
+	// the real ones — the console would fill with rows nobody can act on.
+	if req.Anonymous() {
+		return nil
+	}
+
 	contact, err := s.contacts.Get(ctx, req.ContactID)
 	if err != nil {
 		return err
