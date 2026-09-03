@@ -10,6 +10,7 @@ import (
 
 	"github.com/jjamieson1/CityConnect/internal/domain"
 	"github.com/jjamieson1/CityConnect/internal/portal"
+	"github.com/jjamieson1/CityConnect/internal/requests"
 )
 
 // ctxCitizen carries the signed-in citizen. It is a distinct context key from
@@ -39,6 +40,11 @@ func (s *Server) mountPortal(r chi.Router) {
 		// The catalogue is readable without signing in, so somebody can see
 		// what the city offers before deciding to.
 		p.Get("/catalog", s.handlePortalCatalog)
+
+		// Tracking is public by design: most people who report a pothole never
+		// create an account, and telling them to sign in to find out what
+		// happened is how a service centre gets phoned instead.
+		p.Post("/requests/track", s.handlePortalTrack)
 
 		p.Group(func(auth chi.Router) {
 			auth.Use(s.requireCitizen)
@@ -120,6 +126,60 @@ func (s *Server) handlePortalCatalog(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, listing(entries))
+}
+
+// handlePortalTrack answers "where is my request" for somebody with no account.
+//
+// A POST rather than a GET, deliberately. The verification value is a secret in
+// this exchange, and a secret in a query string is written to browser history,
+// proxy logs, referrer headers and our own access log — four places it survives
+// long after the request it authorised.
+func (s *Server) handlePortalTrack(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		ReferenceNumber   string `json:"referenceNumber"`
+		VerificationValue string `json:"verificationValue"`
+	}
+	if !decode(w, r, &body) {
+		return
+	}
+
+	// Throttle on the *normalised* reference, not the text as typed. Lookup
+	// folds O to 0 and I and L to 1, so BBY-7K4M-2QX0 and BBY-7K4M-2QXO reach
+	// the same request; counting the raw strings would let a caller multiply
+	// their attempts by varying characters the fold makes equivalent.
+	reference := requests.NormalizeReference(body.ReferenceNumber)
+	ip := clientIP(r)
+
+	// Two buckets. Per-IP stops one host sweeping many references; per-reference
+	// stops a distributed attempt at one known reference's verification value.
+	// Both are consumed before either is judged, so a caller cannot learn which
+	// limit they hit.
+	byIP := s.tracker.allow("track|ip|" + ip)
+	byRef := s.tracker.allow("track|ref|" + reference)
+	if !byIP || !byRef {
+		w.Header().Set("Retry-After", "60")
+		writeProblem(w, r, http.StatusTooManyRequests, "rate_limited",
+			"Too many attempts. Wait a minute and try again.")
+		return
+	}
+
+	view, err := s.Portal.Track(r.Context(), portal.TrackInput{
+		Reference:    body.ReferenceNumber,
+		Verification: body.VerificationValue,
+	})
+	if err != nil {
+		// One message for every failure. A reference that does not exist, one
+		// belonging to somebody else, an anonymous report, and a wrong contact
+		// detail are indistinguishable here on purpose — anything else answers
+		// "does this reference exist?" for a caller who has not proved they may
+		// ask. The copy has to carry the guidance the status code cannot.
+		writeProblem(w, r, http.StatusNotFound, "not_found",
+			"We could not find a request matching that reference and contact detail. "+
+				"Check both against your confirmation message. Reports submitted "+
+				"anonymously cannot be tracked.")
+		return
+	}
+	writeJSON(w, http.StatusOK, view)
 }
 
 func (s *Server) handlePortalMe(w http.ResponseWriter, r *http.Request) {

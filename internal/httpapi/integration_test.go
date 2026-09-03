@@ -95,6 +95,10 @@ func newEnvWith(t *testing.T, withSeed bool) *env {
 			SessionCookieName: "cc_session",
 			SessionTTL:        8 * time.Hour, SessionIdleTTL: 2 * time.Hour,
 			RateLimitPerMin: 100000,
+			// Low on purpose: public tracking is throttled as a security
+			// control, and a test that cannot reach the limit cannot prove the
+			// control exists.
+			TrackRateLimitPerMin: 6,
 		},
 		Job: config.JobConfig{Enabled: false, OutboxMaxAttempts: 3},
 		C2: config.C2Config{
