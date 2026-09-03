@@ -147,7 +147,7 @@ func renderOne(name, tmpl string, ctx TemplateContext) (string, error) {
 // would sit silently in the outbox.
 func ValidateTemplate(t *domain.NotificationTemplate) error {
 	sample := TemplateContext{
-		Reference: "SR-2026-000123", Subject: "Pothole on Oak Street",
+		Reference: "SR-7K4M-2QX9", Subject: "Pothole on Oak Street",
 		Status: "in_progress", StatusLabel: "In progress", Priority: "normal",
 		ServiceType: "Pothole repair", Department: "Public Works",
 		Assignee: "A. Agent", Queue: "Roads",

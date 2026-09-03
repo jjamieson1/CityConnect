@@ -295,8 +295,14 @@ type Attachment struct {
 	ScanNote     string `gorm:"size:400" json:"scanNote,omitempty"`
 }
 
-// ReferenceCounter backs the human-readable request reference. A dedicated row
-// per year keeps references sequential and gap-free without scanning requests.
+// ReferenceCounter is a per-year, per-kind sequence.
+//
+// It used to back the request reference, until being sequential turned out to
+// be the problem: a public tracking endpoint plus a reference one increment
+// from the last is a scrape of the city's entire caseload, and the volume of
+// requests per service is not ours to leak. References are now drawn at random
+// — see requests.NewReference — and this counter is kept only for internal
+// numbering that is never quoted publicly.
 type ReferenceCounter struct {
 	Year  int    `gorm:"primaryKey" json:"year"`
 	Kind  string `gorm:"size:20;primaryKey" json:"kind"`

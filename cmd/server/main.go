@@ -92,6 +92,7 @@ func run() error {
 	catalogSvc := catalog.NewService(db, auditSvc, log)
 	routingSvc := routing.NewService(db, auditSvc, log)
 	requestSvc := requests.NewService(db, auditSvc, catalogSvc, routingSvc, log)
+	requestSvc.SetReferencePrefix(cfg.ReferencePrefix)
 	webhookSvc := webhooks.NewService(db, auditSvc, log)
 	reportSvc := reports.NewService(db, log)
 

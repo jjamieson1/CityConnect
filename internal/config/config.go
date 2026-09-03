@@ -35,6 +35,11 @@ type Config struct {
 	AttachmentDir   string
 	AttachmentMaxMB int64
 
+	// ReferencePrefix leads every new request reference, so a municipality can
+	// quote BBY-7K4M-2QX9 rather than the default. Letters and digits only;
+	// the requests package normalises anything else away.
+	ReferencePrefix string
+
 	// BootstrapAdminSubs are C2 subject identifiers granted the admin role at
 	// boot. With C2 SSO as the sole staff login there is no local account to
 	// sign in with, and the UI cannot grant a role to a user that does not
@@ -161,6 +166,7 @@ func Load() (*Config, error) {
 
 		AttachmentDir:        env("CC_ATTACHMENT_DIR", "./data/attachments"),
 		AttachmentMaxMB:      int64(envInt("CC_ATTACHMENT_MAX_MB", 25)),
+		ReferencePrefix:      env("CC_REFERENCE_PREFIX", ""),
 		BootstrapAdminSubs:   envList("CC_BOOTSTRAP_ADMIN_SUBS"),
 		BootstrapAdminEmails: envList("CC_BOOTSTRAP_ADMIN_EMAILS"),
 

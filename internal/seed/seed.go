@@ -17,6 +17,7 @@ import (
 	"github.com/jjamieson1/CityConnect/internal/catalog"
 	"github.com/jjamieson1/CityConnect/internal/config"
 	"github.com/jjamieson1/CityConnect/internal/domain"
+	"github.com/jjamieson1/CityConnect/internal/requests"
 )
 
 // Run installs the baseline configuration.
@@ -444,7 +445,10 @@ func seedMacros(ctx context.Context, db *gorm.DB, depts map[string]string) error
 
 // DemoData installs a sample contact and a handful of requests, for a local
 // walkthrough. It is never run automatically.
-func DemoData(ctx context.Context, db *gorm.DB, log *slog.Logger) error {
+//
+// referencePrefix should be the deployment's configured prefix, so the sample
+// request quotes a reference in the same shape the running system would issue.
+func DemoData(ctx context.Context, db *gorm.DB, log *slog.Logger, referencePrefix string) error {
 	var count int64
 	db.WithContext(ctx).Model(&domain.Request{}).Count(&count)
 	if count > 0 {
@@ -479,9 +483,15 @@ func DemoData(ctx context.Context, db *gorm.DB, log *slog.Logger) error {
 		return err
 	}
 
+	// A fixed reference rather than a drawn one, so re-running the demo seed
+	// finds the row it made last time instead of adding another. It still
+	// carries the shape a real reference has — the demo should not be the one
+	// place a sequential-looking number survives.
+	demoReference := requests.NormalizeReferencePrefix(referencePrefix) + "-DEM0-0001"
+
 	now := time.Now().UTC()
 	req := domain.Request{
-		Reference: "SR-DEMO-000001", ContactID: contact.ID,
+		Reference: demoReference, ContactID: contact.ID,
 		ServiceTypeID: pothole.ID, DepartmentID: pothole.DepartmentID,
 		QueueID: pothole.DefaultQueueID, Source: domain.SourceAgent,
 		Status: domain.StatusInProgress, Priority: domain.PriorityNormal,

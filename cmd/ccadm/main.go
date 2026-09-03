@@ -25,6 +25,7 @@ import (
 	"github.com/jjamieson1/CityConnect/internal/c2/oidc"
 	"github.com/jjamieson1/CityConnect/internal/config"
 	"github.com/jjamieson1/CityConnect/internal/domain"
+	"github.com/jjamieson1/CityConnect/internal/requests"
 	"github.com/jjamieson1/CityConnect/internal/seed"
 	"github.com/jjamieson1/CityConnect/internal/store"
 )
@@ -46,6 +47,7 @@ Commands:
   verify-audit           Replay and verify the audit hash chain
   check-c2               Resolve C2 discovery and report the endpoints in use
   unlock                 Reactivate a user and clear their sessions
+  reissue-references     Replace sequential request references with drawn ones
 
 Run 'ccadm <command> -h' for the flags of a command.
 `
@@ -83,7 +85,7 @@ func dispatch(command string, args []string) error {
 			if err := seed.Run(ctx, db, cfg, log); err != nil {
 				return err
 			}
-			return seed.DemoData(ctx, db, log)
+			return seed.DemoData(ctx, db, log, cfg.ReferencePrefix)
 		})
 
 	case "grant-role":
@@ -102,6 +104,8 @@ func dispatch(command string, args []string) error {
 		return checkC2()
 	case "unlock":
 		return unlock(args)
+	case "reissue-references":
+		return reissueReferences(args)
 
 	case "-h", "--help", "help":
 		fmt.Print(usage)
@@ -424,6 +428,101 @@ func checkC2() error {
 	}
 	fmt.Println("\nJWKS fetched and cached. C2 is reachable and correctly configured.")
 	return nil
+}
+
+// reissueReferences replaces guessable, counter-era references with drawn ones.
+//
+// References used to be allocated in sequence (SR-2026-000001), which makes the
+// city's whole caseload enumerable the moment a reference is quotable on a
+// public tracking endpoint. New requests are drawn at random; this converts what
+// is already in the table.
+//
+// It rewrites the identifier a resident may already be holding, so it reports by
+// default and only writes when told to. Every rewrite lands in the audit chain.
+func reissueReferences(args []string) error {
+	fs := flag.NewFlagSet("reissue-references", flag.ExitOnError)
+	confirm := fs.Bool("confirm", false, "actually rewrite; without it this only reports")
+	prefix := fs.String("prefix", "", "reference prefix to issue under (default: CC_REFERENCE_PREFIX)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	return withDB(func(ctx context.Context, db *gorm.DB, cfg *config.Config, log *slog.Logger) error {
+		use := requests.NormalizeReferencePrefix(firstNonEmpty(*prefix, cfg.ReferencePrefix))
+
+		var all []domain.Request
+		if err := db.WithContext(ctx).Select("id", "reference").Find(&all).Error; err != nil {
+			return err
+		}
+
+		stale := make([]domain.Request, 0, len(all))
+		for _, r := range all {
+			if !requests.IsGeneratedReference(r.Reference) {
+				stale = append(stale, r)
+			}
+		}
+
+		fmt.Printf("%d request(s); %d carry a sequential reference\n", len(all), len(stale))
+		if len(stale) == 0 {
+			return nil
+		}
+		if !*confirm {
+			for i, r := range stale {
+				if i == 10 {
+					fmt.Printf("  … and %d more\n", len(stale)-i)
+					break
+				}
+				fmt.Printf("  %s\n", r.Reference)
+			}
+			fmt.Println("\nNothing written. Re-run with -confirm to reissue these under " + use + "-.")
+			return nil
+		}
+
+		aud := audit.NewService(db, log)
+		actor := audit.JobActor("ccadm reissue-references")
+
+		var done int
+		for _, r := range stale {
+			// The unique index is the arbiter of a collision, exactly as it is
+			// for a live submission, so retry the draw rather than failing the run.
+			var lastErr error
+			for attempt := 0; attempt < 3; attempt++ {
+				next, err := requests.NewReference(use)
+				if err != nil {
+					return err
+				}
+				err = db.WithContext(ctx).Model(&domain.Request{}).
+					Where("id = ?", r.ID).Update("reference", next).Error
+				if err != nil {
+					lastErr = err
+					continue
+				}
+				aud.Record(ctx, actor, audit.Entry{
+					Action: "request.reference_reissued", TargetType: "request", TargetID: r.ID,
+					Summary: r.Reference + " -> " + next,
+				})
+				lastErr = nil
+				done++
+				break
+			}
+			if lastErr != nil {
+				return fmt.Errorf("reissue %s: %w", r.Reference, lastErr)
+			}
+		}
+
+		fmt.Printf("%d reference(s) reissued under %s-.\n", done, use)
+		fmt.Println("Anything printed or emailed with an old reference no longer resolves.")
+		return nil
+	})
+}
+
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if strings.TrimSpace(v) != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 // unlock reactivates a user and clears their sessions, for the case where

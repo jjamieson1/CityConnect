@@ -151,7 +151,7 @@ function roleLabel(role?: string) {
 
 /**
  * The omnibox. A reference typed in full jumps straight to that request —
- * an agent on a call with a citizen reading out "SR-2026-000123" wants the
+ * an agent on a call with a citizen reading out "SR-7K4M-2QX9" wants the
  * record, not a ranked list.
  */
 function GlobalSearch() {

@@ -87,9 +87,9 @@ func TestBundleLinksAreOnThePortalOrigin(t *testing.T) {
 
 	now := time.Now()
 	open := []domain.Request{
-		{Reference: "SR-2026-000001", Subject: "Pothole on Elm Street",
+		{Reference: "SR-7K4M-2QX9", Subject: "Pothole on Elm Street",
 			Status: domain.StatusInProgress, LastActivityA: now},
-		{Reference: "SR-2026-000002", Subject: "Streetlight out",
+		{Reference: "SR-3B8N-9WQD", Subject: "Streetlight out",
 			Status: domain.StatusNew, LastActivityA: now.Add(-48 * time.Hour)},
 	}
 
@@ -120,7 +120,7 @@ func TestBundleLinksAreOnThePortalOrigin(t *testing.T) {
 
 	// The reference is what the citizen sees quoted everywhere else, and what
 	// the portal routes on — so the deep link must be keyed on it.
-	if want := portalURL + "/requests/SR-2026-000001"; b.Tasks[0].URL != want {
+	if want := portalURL + "/requests/SR-7K4M-2QX9"; b.Tasks[0].URL != want {
 		t.Errorf("task URL = %q, want %q", b.Tasks[0].URL, want)
 	}
 }
@@ -245,7 +245,7 @@ func TestOpenRequestsKeepAtLeastHalfTheCard(t *testing.T) {
 	var open []domain.Request
 	for i := 0; i < 20; i++ {
 		open = append(open, domain.Request{
-			Reference: fmt.Sprintf("SR-2026-%06d", i+1), Subject: "Something",
+			Reference: fmt.Sprintf("SR-DEM0-%04d", i+1), Subject: "Something",
 			Status: domain.StatusNew, LastActivityA: now,
 		})
 	}
