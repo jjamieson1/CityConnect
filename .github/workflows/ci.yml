@@ -1,0 +1,141 @@
+# CityConnect CI.
+#
+# Two jobs, deliberately overlapping. `verify` is fast feedback: no tool
+# installs, so a broken build or test is red within a couple of minutes.
+# `security` is the evidence run — it installs the scanners, produces the
+# dashboard and the health bundle, and is what the Burnaby security review
+# actually asks to see. The overlap costs a minute and buys a clear signal
+# about which kind of thing broke.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Build, test and typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          # From go.mod, so the toolchain is bumped in exactly one place —
+          # govulncheck stdlib advisories are fixed by raising it there.
+          go-version-file: go.mod
+          cache: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: go build ./...
+      - run: go vet ./...
+      - run: go test ./... -count=1
+
+      # One install for the workspace root; both SPAs hoist their modules here.
+      - run: npm ci
+
+      # Each SPA gets its own step rather than relying on the root script, so a
+      # failure names the application that broke. web-portal is the public
+      # citizen surface and must never be the one nobody checked.
+      - run: npm run lint --workspace web
+      - run: npm run lint --workspace web-portal
+      - run: npm run build --workspace web
+      - run: npm run build --workspace web-portal
+
+  accessibility:
+    name: Accessibility (WCAG 2.2 AA)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      # Chromium only. The suite checks the rendered portal against axe, and a
+      # second engine would double the runtime to re-answer the same question.
+      - run: npx playwright install --with-deps chromium
+
+      # Builds the portal and serves it, with the API stubbed in the tests — so
+      # no Go service and no database are needed to check accessibility.
+      - run: npm run test:a11y
+
+      - name: Upload accessibility report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: a11y-report-${{ github.sha }}
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 30
+
+  security:
+    name: Security scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # gitleaks scans history, and the default shallow clone would hand it
+          # a single commit — a green result that means nothing.
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      # Pinned, not @latest. A scanner that changes underneath us turns an
+      # unrelated commit red, and an unpinned tool in a security pipeline is
+      # the supply-chain question we would rather answer than be asked.
+      - name: Install scanners
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@v1.7.0
+          go install github.com/securego/gosec/v2/cmd/gosec@v2.29.0
+          go install github.com/zricethezav/gitleaks/v8@v8.30.1
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+      # --fail-on-gating exits non-zero when a gating check did not pass —
+      # including one that was skipped because its tool is missing. A gate that
+      # cannot tell "clean" from "never ran" is not a gate.
+      - name: Scan
+        run: go run ./cmd/security-dashboard scan --trigger ci --fail-on-gating
+
+      # Built here rather than by hand, so what gets uploaded to C2's admin
+      # Health dashboard is a copy of what CI actually observed.
+      - name: Build health bundle
+        if: always()
+        run: go run ./cmd/security-dashboard bundle > health.json
+
+      - name: Upload security evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-evidence-${{ github.sha }}
+          path: |
+            health.json
+            security/dashboard.html
+            security/runs/
+          retention-days: 30

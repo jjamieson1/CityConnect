@@ -2,8 +2,13 @@
 // single, self-contained, shareable HTML dashboard — evidence that the app is
 // tested with rigor, for developers and customers alike.
 //
-//	go run ./cmd/security-dashboard scan     # run all configured checks, record a run, re-render
+//	go run ./cmd/security-dashboard scan      # run all configured checks, record a run, re-render
 //	go run ./cmd/security-dashboard render    # re-render dashboard.html from existing runs
+//	go run ./cmd/security-dashboard bundle    # emit the health bundle for C2's admin dashboard
+//
+// Flags: --dir <path>, --trigger manual|ci|nightly, and --fail-on-gating, which
+// exits non-zero when any gating check did not pass. CI uses the last one; a
+// developer scanning locally wants the report, not a broken shell.
 //
 // It is deliberately manifest-driven and language-agnostic: `scan` writes a JSON
 // run manifest (+ raw reports) under security/runs/, and `render` builds the page
@@ -131,6 +136,7 @@ type Task struct {
 func main() {
 	dir := "security"
 	trigger := "manual"
+	failOnGating := false
 	args := os.Args[1:]
 	cmd := "render"
 	if len(args) > 0 && (args[0] == "scan" || args[0] == "render" || args[0] == "bundle") {
@@ -149,6 +155,8 @@ func main() {
 			if i < len(args) {
 				trigger = args[i]
 			}
+		case "--fail-on-gating":
+			failOnGating = true
 		}
 	}
 
@@ -169,6 +177,7 @@ func main() {
 		return
 	}
 
+	var unmet []CheckResult
 	if cmd == "scan" {
 		run := performScan(cfg, dir, trigger)
 		if err := saveRun(dir, run); err != nil {
@@ -176,12 +185,41 @@ func main() {
 		}
 		fmt.Printf("security-dashboard: recorded run %s (%d pass, %d fail, %d warn, %d skipped)\n",
 			run.ID, run.Totals.Pass, run.Totals.Fail, run.Totals.Warn, run.Totals.Skipped)
+		unmet = unmetGating(run)
 	}
 
 	if err := render(dir, cfg); err != nil {
 		fatal(err)
 	}
 	fmt.Printf("security-dashboard: wrote %s\n", filepath.Join(dir, "dashboard.html"))
+
+	if failOnGating && len(unmet) > 0 {
+		fmt.Fprintf(os.Stderr, "\nsecurity-dashboard: %d gating check(s) did not pass\n", len(unmet))
+		for _, c := range unmet {
+			fmt.Fprintf(os.Stderr, "  %-14s %-8s %s\n", c.Key, c.Status, c.Summary)
+			if c.Status == "skipped" && c.InstallHint != "" {
+				fmt.Fprintf(os.Stderr, "  %-14s          install: %s\n", "", c.InstallHint)
+			}
+		}
+		os.Exit(1)
+	}
+}
+
+// unmetGating returns the gating checks that did not pass.
+//
+// Deliberately "did not pass" rather than "failed". A gating check whose tool is
+// not installed is recorded as skipped, and skipped is not counted in
+// Totals.GatingFail — so a pipeline that gates on failures alone goes green when
+// govulncheck is simply absent from the runner. A gate that cannot tell "clean"
+// from "never ran" is not a gate, and this is the shape that bug takes.
+func unmetGating(run Run) []CheckResult {
+	var out []CheckResult
+	for _, c := range run.Checks {
+		if c.Gating && c.Status != "pass" {
+			out = append(out, c)
+		}
+	}
+	return out
 }
 
 // buildBundle assembles a health bundle for upload to C2: the latest security
