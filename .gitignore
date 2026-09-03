@@ -53,3 +53,7 @@ scripts/dev.env
 
 # Claude Code personal settings (not shared)
 .claude/settings.local.json
+
+# Playwright accessibility run output
+/playwright-report/
+/test-results/
