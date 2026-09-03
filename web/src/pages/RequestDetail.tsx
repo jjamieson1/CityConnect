@@ -598,11 +598,11 @@ function LinkDialog({ requestId, open, onClose, onDone }: {
       <div className="space-y-3">
         {link.error && <ErrorNote error={link.error} />}
 
-        <Field label="Reference" hint="The SR- number of the other request">
+        <Field label="Reference" hint="The reference number of the other request">
           <Input
             value={reference}
             onChange={(e) => setReference(e.target.value.toUpperCase())}
-            placeholder="SR-2026-000123"
+            placeholder="SR-7K4M-2QX9"
           />
         </Field>
 

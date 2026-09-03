@@ -46,13 +46,14 @@ type WebhookPublisher interface {
 
 // Service implements request management.
 type Service struct {
-	db      *gorm.DB
-	audit   *audit.Service
-	catalog *catalog.Service
-	routing *routing.Service
-	notify  Notifier
-	hooks   WebhookPublisher
-	log     *slog.Logger
+	db        *gorm.DB
+	audit     *audit.Service
+	catalog   *catalog.Service
+	routing   *routing.Service
+	notify    Notifier
+	hooks     WebhookPublisher
+	refPrefix string
+	log       *slog.Logger
 }
 
 // NewService builds the requests service.
@@ -65,8 +66,20 @@ func NewService(
 ) *Service {
 	return &Service{
 		db: db, audit: aud, catalog: cat, routing: route,
-		log: log.With("component", "requests"),
+		refPrefix: DefaultReferencePrefix,
+		log:       log.With("component", "requests"),
 	}
+}
+
+// SetReferencePrefix sets the prefix new request references carry, so a
+// deployment can quote BBY-… rather than the default.
+//
+// It is a setter rather than a constructor argument because it is optional
+// presentation: every deployment gets a working default, and a municipality
+// that wants its own initials should not force a signature change on the one
+// caller that does not care.
+func (s *Service) SetReferencePrefix(prefix string) {
+	s.refPrefix = NormalizeReferencePrefix(prefix)
 }
 
 // SetNotifier wires the notification hook after construction, breaking the
@@ -206,29 +219,40 @@ func (s *Service) Create(ctx context.Context, actor audit.Actor, in CreateInput)
 		s.log.WarnContext(ctx, "could not compute SLA targets", "error", err)
 	}
 
-	err = store.Tx(ctx, s.db, func(tx *gorm.DB) error {
-		ref, err := nextReference(tx, now.Year())
+	summary := "request opened"
+	if len(decision.MatchedRules) > 0 {
+		names := make([]string, len(decision.MatchedRules))
+		for i, m := range decision.MatchedRules {
+			names[i] = m.Name
+		}
+		summary = "request opened; routed by " + strings.Join(names, ", ")
+	}
+
+	// The reference is drawn at random rather than allocated in sequence, so a
+	// collision is possible in principle and must never reach the resident as a
+	// failed submission. The unique index on reference is the arbiter, and
+	// another draw is the whole remedy.
+	for attempt := 1; ; attempt++ {
+		req.Reference, err = NewReference(s.refPrefix)
 		if err != nil {
-			return err
-		}
-		req.Reference = ref
-
-		if err := tx.Create(req).Error; err != nil {
-			return err
+			return nil, err
 		}
 
-		summary := "request opened"
-		if len(decision.MatchedRules) > 0 {
-			names := make([]string, len(decision.MatchedRules))
-			for i, m := range decision.MatchedRules {
-				names[i] = m.Name
+		err = store.Tx(ctx, s.db, func(tx *gorm.DB) error {
+			if err := tx.Create(req).Error; err != nil {
+				return err
 			}
-			summary = "request opened; routed by " + strings.Join(names, ", ")
+			return s.addEvent(ctx, tx, req.ID, domain.EvtCreated, actor, summary, "", string(req.Status),
+				domain.JSONMap{"source": source, "matchedRules": decision.MatchedRules}, true)
+		})
+		if err == nil {
+			break
 		}
-		return s.addEvent(ctx, tx, req.ID, domain.EvtCreated, actor, summary, "", string(req.Status),
-			domain.JSONMap{"source": source, "matchedRules": decision.MatchedRules}, true)
-	})
-	if err != nil {
+		if attempt < referenceAttempts && errors.Is(store.Translate(err), store.ErrDuplicate) {
+			s.log.WarnContext(ctx, "request reference collided; drawing another",
+				"attempt", attempt)
+			continue
+		}
 		return nil, store.Translate(err)
 	}
 
@@ -298,35 +322,6 @@ func (s *Service) resolveServiceType(ctx context.Context, id, code string) (*dom
 	return nil, fmt.Errorf("%w: a service type id or code is required", ErrInvalidInput)
 }
 
-// nextReference allocates the next human-quotable reference for the year.
-//
-// A dedicated counter row is used rather than counting requests: counting
-// races under concurrent inserts and produces duplicate references, and a
-// reference is the number a citizen reads out over the phone.
-func nextReference(tx *gorm.DB, year int) (string, error) {
-	counter := domain.ReferenceCounter{Year: year, Kind: "request"}
-
-	err := tx.Where("year = ? AND kind = ?", year, "request").
-		Attrs(domain.ReferenceCounter{Value: 0}).
-		FirstOrCreate(&counter).Error
-	if err != nil {
-		return "", fmt.Errorf("requests: reserve reference: %w", err)
-	}
-
-	res := tx.Model(&domain.ReferenceCounter{}).
-		Where("year = ? AND kind = ?", year, "request").
-		UpdateColumn("value", gorm.Expr("value + 1"))
-	if res.Error != nil {
-		return "", fmt.Errorf("requests: increment reference: %w", res.Error)
-	}
-
-	var updated domain.ReferenceCounter
-	if err := tx.Where("year = ? AND kind = ?", year, "request").First(&updated).Error; err != nil {
-		return "", fmt.Errorf("requests: read reference: %w", err)
-	}
-	return fmt.Sprintf("SR-%d-%06d", year, updated.Value), nil
-}
-
 // Get loads a request with its associations.
 func (s *Service) Get(ctx context.Context, id string) (*domain.Request, error) {
 	var r domain.Request
@@ -345,7 +340,7 @@ func (s *Service) GetByReference(ctx context.Context, reference string) (*domain
 	var r domain.Request
 	err := s.db.WithContext(ctx).
 		Preload("Contact").Preload("ServiceType").Preload("Queue").Preload("AssigneeUser").
-		First(&r, "reference = ?", strings.ToUpper(strings.TrimSpace(reference))).Error
+		First(&r, "reference = ?", NormalizeReference(reference)).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, ErrNotFound
 	}

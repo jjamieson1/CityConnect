@@ -247,7 +247,7 @@ type searchResult struct {
 // handleSearch is the omnibox behind the console's search bar.
 //
 // A reference typed in full short-circuits everything else: an agent on a call
-// with a citizen reading out "SR-2026-000123" wants that record, not a ranked
+// with a citizen reading out "SR-7K4M-2QX9" wants that record, not a ranked
 // list that happens to contain it.
 func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query().Get("q")
