@@ -113,6 +113,31 @@ const (
 	SourceImport = "import"
 )
 
+// Submission channels describe how much the requester told us about themselves,
+// which is a different question from Source (where the request arrived from).
+//
+// The distinction is what the citizen is owed. An anonymous report has no
+// contact at all, so there is nobody to confirm to, nobody to notify and
+// nothing to verify a later tracking attempt against — it is deliberately a
+// weaker deal, and that asymmetry is what makes giving an email worth doing.
+const (
+	// ChannelAnonymous carries no contact. ContactID is empty.
+	ChannelAnonymous = "anonymous"
+	// ChannelGuest gave contact details but holds no C2 account.
+	ChannelGuest = "guest"
+	// ChannelAuthenticated signed in through C2.
+	ChannelAuthenticated = "authenticated"
+)
+
+// ValidChannel reports whether c is a known submission channel.
+func ValidChannel(c string) bool {
+	switch c {
+	case ChannelAnonymous, ChannelGuest, ChannelAuthenticated:
+		return true
+	}
+	return false
+}
+
 // Request is a service request — the central work item. Reference is the
 // human-quotable identifier a citizen reads over the phone; ID is the internal
 // UUID.
@@ -120,7 +145,20 @@ type Request struct {
 	Base
 	Reference string `gorm:"size:32;uniqueIndex;not null" json:"reference"`
 
-	ContactID     string `gorm:"type:char(36);index;not null" json:"contactId"`
+	// ContactID is empty for an anonymous report.
+	//
+	// Nullable rather than pointed at a shared "anonymous" contact: a sentinel
+	// row would accumulate every anonymous request in the city against one
+	// fictional resident, and silently poison contact reporting, dedupe and
+	// merge — each of which would treat it as a real person with thousands of
+	// cases. An absent contact is honest and every reader has to handle it.
+	ContactID string `gorm:"type:char(36);index" json:"contactId,omitempty"`
+
+	// Channel records how much the requester identified themselves. See the
+	// Channel* constants; it governs what we may send them and whether they can
+	// track the request later.
+	Channel string `gorm:"size:20;not null;default:'authenticated';index" json:"channel"`
+
 	ServiceTypeID string `gorm:"type:char(36);index;not null" json:"serviceTypeId"`
 	DepartmentID  string `gorm:"type:char(36);index" json:"departmentId,omitempty"`
 	QueueID       string `gorm:"type:char(36);index" json:"queueId,omitempty"`
@@ -197,6 +235,22 @@ type Request struct {
 // Assigned reports whether the request has an owner of either kind.
 func (r *Request) Assigned() bool {
 	return r.AssigneeUserID != "" || r.AssigneeSystemID != ""
+}
+
+// Anonymous reports whether the request was filed without any contact.
+//
+// Prefer this over testing ContactID directly: it is the question callers
+// actually mean, and it keeps the reason for the empty column at one place.
+func (r *Request) Anonymous() bool {
+	return r.ContactID == ""
+}
+
+// Contactable reports whether there is someone to send an update to.
+//
+// An anonymous report is not contactable and never becomes so — that is the
+// deal the resident accepted, not a gap to be filled in later.
+func (r *Request) Contactable() bool {
+	return r.ContactID != ""
 }
 
 // CommentVisibility controls who can see a comment. Citizen-visible comments

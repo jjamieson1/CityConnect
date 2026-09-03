@@ -53,10 +53,9 @@ const CATALOG = {
  * resident who never made an account is the one most likely to be using
  * assistive technology on a page nobody tested.
  *
- * The intake form is the exception: it still requires a session today, and
- * signed out it bounces to C2 for silent SSO rather than rendering. Once CIT-11
- * and CIT-12 land the anonymous and guest paths, that test should drop back to
- * the signed-out default — which is the state it most needs checking in.
+ * Signed in is available for the paths that still need a session — history and
+ * a report's detail view — but the intake and tracking forms are checked signed
+ * out, because that is how most residents meet them.
  */
 async function stubApi(page: Page, { signedIn = false } = {}) {
   // Order matters, and not the way it reads. Playwright tries the most recently
@@ -121,11 +120,30 @@ test("landing page — finding a service", async ({ page }) => {
 });
 
 test("intake form — reporting a pothole", async ({ page }) => {
-  await stubApi(page, { signedIn: true });
+  // Signed out, which is the state that matters: CIT-11 opened this form to
+  // residents with no account, and they are the ones most likely to be using
+  // assistive technology on a page nobody thought to test.
+  await stubApi(page);
   await page.goto("/new/POTHOLE");
   // The form is built from the stubbed field definitions, so wait for a field
   // rather than the heading: an empty form would pass a scan meaninglessly.
   await expect(page.getByLabel(/how big is it/i)).toBeVisible();
+
+  const results = await scan(page);
+  expect(describe(results.violations)).toBe("");
+});
+
+/**
+ * The anonymous confirmation, which carries bad news the resident has to take
+ * in: this report cannot be checked on later. If that only lands visually, the
+ * people most likely to miss it are exactly the ones least able to recover.
+ */
+test("anonymous confirmation — the reference and its limits", async ({ page }) => {
+  await stubApi(page);
+  await page.goto("/submitted/SR-7K4M-2QX9");
+
+  await expect(page.getByText("SR-7K4M-2QX9")).toBeVisible();
+  await expect(page.getByText(/cannot be checked on later/i)).toBeVisible();
 
   const results = await scan(page);
   expect(describe(results.violations)).toBe("");

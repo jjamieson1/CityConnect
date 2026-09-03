@@ -50,6 +50,8 @@ export interface MyRequest {
   expectedBy?: string;
   resolvedAt?: string;
   resolution?: string;
+  /** False for an anonymous report: nothing to verify a later lookup against. */
+  trackable: boolean;
   canCancel: boolean;
   canComment: boolean;
   canRate: boolean;

@@ -46,12 +46,18 @@ func (s *Server) mountPortal(r chi.Router) {
 		// happened is how a service centre gets phoned instead.
 		p.Post("/requests/track", s.handlePortalTrack)
 
+		// Reporting is public for the same reason, and for a stronger one: a
+		// hazard in the road is worth knowing about whether or not the person
+		// who saw it wants an account. The handler reads the session if there
+		// is one and files anonymously if there is not — it is deliberately
+		// outside requireCitizen rather than branching inside it.
+		p.Post("/requests", s.handlePortalCreate)
+
 		p.Group(func(auth chi.Router) {
 			auth.Use(s.requireCitizen)
 
 			auth.Get("/me", s.handlePortalMe)
 			auth.Get("/requests", s.handlePortalRequests)
-			auth.Post("/requests", s.handlePortalCreate)
 			auth.Get("/requests/{reference}", s.handlePortalRequest)
 			auth.Post("/requests/{reference}/comments", s.handlePortalComment)
 			auth.Post("/requests/{reference}/cancel", s.handlePortalCancel)
@@ -221,16 +227,55 @@ type portalCreateBody struct {
 	FormData      domain.JSONMap `json:"formData,omitempty"`
 }
 
+// optionalCitizen resolves a portal session if the caller has one, and reports
+// nothing if they do not.
+//
+// Distinct from requireCitizen on purpose. This is the only shape where a bad
+// or expired cookie must not be an error: the resident is reporting a hazard,
+// and refusing them because their session lapsed would lose the report to spare
+// them a sign-in they did not ask for. It fails open into the anonymous path,
+// which is the weaker deal, never the stronger one.
+func (s *Server) optionalCitizen(r *http.Request) *domain.Contact {
+	cookie, err := r.Cookie(s.portalCookieName())
+	if err != nil {
+		return nil
+	}
+	contact, _, err := s.Portal.Authenticate(r.Context(), cookie.Value)
+	if err != nil {
+		return nil
+	}
+	return contact
+}
+
+// handlePortalCreate files a report, with or without a session.
+//
+// Signed in, it is attributed to that resident and they get confirmations,
+// updates and tracking. Signed out, it is filed anonymously and they get a
+// reference and nothing else — which the response says plainly via `trackable`.
 func (s *Server) handlePortalCreate(w http.ResponseWriter, r *http.Request) {
 	var body portalCreateBody
 	if !decode(w, r, &body) {
 		return
 	}
-	view, err := s.Portal.Create(r.Context(), citizenFrom(r.Context()), portal.CreateInput{
+
+	in := portal.CreateInput{
 		ServiceTypeID: body.ServiceTypeID, Subject: body.Subject,
 		Description: body.Description, Address1: body.Address1, City: body.City,
 		PostalCode: body.PostalCode, Ward: body.Ward, FormData: body.FormData,
-	})
+	}
+
+	var (
+		view *portal.MyRequest
+		err  error
+	)
+	// The session decides the channel, never the request body. A client that
+	// could ask to be treated as signed-in would be choosing whose name goes on
+	// the report.
+	if contact := s.optionalCitizen(r); contact != nil {
+		view, err = s.Portal.Create(r.Context(), contact, in)
+	} else {
+		view, err = s.Portal.CreateAnonymous(r.Context(), in)
+	}
 	if err != nil {
 		failPortal(w, r, err)
 		return

@@ -98,7 +98,11 @@ func (s *Service) DB() *gorm.DB { return s.db }
 
 // CreateInput describes a new service request.
 type CreateInput struct {
-	ContactID       string
+	ContactID string
+	// Channel is one of domain.Channel*. Empty defaults to authenticated,
+	// which keeps every existing caller — staff, API, importers — meaning what
+	// it meant before: a request filed on behalf of a known contact.
+	Channel         string
 	ServiceTypeID   string
 	ServiceTypeCode string
 	Subject         string
@@ -131,7 +135,22 @@ type CreateInput struct {
 // request, computes SLA targets, writes the opening timeline entry and queues
 // the acknowledgement notification.
 func (s *Service) Create(ctx context.Context, actor audit.Actor, in CreateInput) (*domain.Request, error) {
-	if in.ContactID == "" {
+	channel := in.Channel
+	if channel == "" {
+		channel = domain.ChannelAuthenticated
+	}
+	if !domain.ValidChannel(channel) {
+		return nil, fmt.Errorf("%w: unknown submission channel %q", ErrInvalidInput, channel)
+	}
+
+	// The contact and the channel have to agree, and this is the only place
+	// that is enforced. An anonymous request carrying a contact id would leak
+	// somebody's identity onto a report they were promised was anonymous; an
+	// identified one without a contact would be silently unreachable.
+	switch {
+	case channel == domain.ChannelAnonymous && in.ContactID != "":
+		return nil, fmt.Errorf("%w: an anonymous request cannot carry a contact", ErrInvalidInput)
+	case channel != domain.ChannelAnonymous && in.ContactID == "":
 		return nil, fmt.Errorf("%w: contactId is required", ErrInvalidInput)
 	}
 
@@ -170,6 +189,7 @@ func (s *Service) Create(ctx context.Context, actor audit.Actor, in CreateInput)
 	now := time.Now().UTC()
 	req := &domain.Request{
 		ContactID:     in.ContactID,
+		Channel:       channel,
 		ServiceTypeID: st.ID,
 		DepartmentID:  st.DepartmentID,
 		QueueID:       firstNonEmpty(in.QueueID, st.DefaultQueueID),

@@ -83,6 +83,9 @@ export default function Portal() {
               {/* Public by design: no signedIn prop, because needing an account
                   is precisely what this route exists to avoid. */}
               <Route path="/track" element={<Track />} />
+              {/* Where an anonymous report lands. It has no detail page,
+                  because there is nothing to authorise showing it again. */}
+              <Route path="/submitted/:reference" element={<AnonymousSubmitted />} />
               <Route path="/requests" element={<MyReports signedIn={signedIn} />} />
               <Route path="/requests/:reference" element={<ReportDetail signedIn={signedIn} />} />
               <Route path="*" element={<Navigate to="/" replace />} />
@@ -300,11 +303,14 @@ function Report({ signedIn }: { signedIn: boolean }) {
       }),
     onSuccess: (created) => {
       void queryClient.invalidateQueries({ queryKey: ["portal", "requests"] });
-      navigate(`/requests/${created.reference}?new=1`);
+      // An anonymous report cannot be reopened by reference, so there is no
+      // detail page to send them to. The confirmation route carries everything
+      // they will ever be able to see about it.
+      if (created.trackable) navigate(`/requests/${created.reference}?new=1`);
+      else navigate(`/submitted/${created.reference}`);
     },
   });
 
-  if (!signedIn) return <SignInPrompt what="report a problem" />;
   if (catalog.isLoading) return <Spinner />;
   if (!entry) {
     return (
@@ -400,9 +406,29 @@ function Report({ signedIn }: { signedIn: boolean }) {
           </fieldset>
         )}
 
+        {!signedIn && (
+          <div
+            className="rounded-md px-4 py-3 text-sm"
+            style={{ background: "var(--surface-0)" }}
+          >
+            <p className="font-medium">You are reporting without an account</p>
+            <p className="mt-1 text-ink-muted">
+              We will still act on it, and you will get a reference number. But with no way to
+              reach you we cannot confirm it, send updates, or let you check on it later — not
+              even with the reference.{" "}
+              <a className="underline underline-offset-2" href={portalApi.loginUrl(window.location.pathname)}>
+                Sign in first
+              </a>{" "}
+              if you would like to be kept posted.
+            </p>
+          </div>
+        )}
+
         <div className="flex items-center justify-between gap-3">
           <p className="text-xs text-ink-faint">
-            We will send you a reference number and keep you updated.
+            {signedIn
+              ? "We will send you a reference number and keep you updated."
+              : "We will give you a reference number when you submit."}
           </p>
           <Button type="submit" variant="primary" disabled={!ready || submit.isPending}>
             {submit.isPending ? "Sending…" : "Send report"}
@@ -663,6 +689,67 @@ function ReportDetail({ signedIn }: { signedIn: boolean }) {
 
       {r.canComment && <ReplyBox reference={r.reference} onSent={refresh} />}
       {r.canCancel && <WithdrawBox reference={r.reference} onDone={refresh} />}
+    </div>
+  );
+}
+
+/**
+ * The end of the road for an anonymous report.
+ *
+ * This screen exists because the reference is about to stop being useful and
+ * the resident does not know that yet. Everywhere else in the portal a
+ * reference is a key; here it is a courtesy — there is no contact detail to
+ * verify a later lookup against, so nobody can open this report again, us
+ * included.
+ *
+ * Saying so plainly at the one moment it can still be acted on is the honest
+ * design. Burying it would be worse than not offering the path at all: the
+ * resident would come back in a week, fail to find their report, and conclude
+ * the City lost it.
+ */
+function AnonymousSubmitted() {
+  const { reference = "" } = useParams();
+
+  return (
+    <div className="space-y-4">
+      <div
+        className="rounded-md px-4 py-3 text-sm"
+        style={{ background: "var(--status-good-bg)", color: "var(--status-good)" }}
+      >
+        Thank you — we have your report and it is on its way to the right team.
+      </div>
+
+      <div className="cc-card p-5">
+        <p className="text-sm text-ink-muted">Your reference number</p>
+        <p className="mt-1 font-mono text-2xl font-semibold">{reference}</p>
+
+        <div className="mt-5 rounded-md p-4" style={{ background: "var(--surface-0)" }}>
+          <p className="font-medium">This report cannot be checked on later</p>
+          <p className="mt-1 text-sm text-ink-muted">
+            You reported without giving us any contact details, so there is nothing for us to
+            check a later enquiry against — the reference on its own is not enough, and we have
+            no way to send you updates. Quote it if you contact the City about this report.
+          </p>
+        </div>
+
+        <div className="mt-5 flex flex-wrap gap-3">
+          <Link className="cc-btn cc-btn-primary" to="/">
+            Report something else
+          </Link>
+          <a className="cc-btn" href={portalApi.loginUrl("/")}>
+            Sign in for next time
+          </a>
+        </div>
+      </div>
+
+      <p className="text-sm text-ink-muted">
+        Reporting with an account, or with an email address, means we can confirm we have it,
+        tell you when it is done, and let you{" "}
+        <Link className="underline underline-offset-2" to="/track">
+          check on it whenever you like
+        </Link>
+        .
+      </p>
     </div>
   );
 }
