@@ -128,8 +128,11 @@ func (s *Service) SaveServiceType(ctx context.Context, actor audit.Actor, st *do
 	if st.ID != "" {
 		action = "service_type.updated"
 	}
-	if err := s.db.WithContext(ctx).Save(st).Error; err != nil {
-		return nil, store.Translate(err)
+	// store.Save rather than gorm's: a service type created with Active or
+	// PublicVisible unticked would otherwise be written as ticked, publishing
+	// something to the citizen portal that an administrator staged as a draft.
+	if err := store.Save(s.db.WithContext(ctx), st, st.ID); err != nil {
+		return nil, err
 	}
 	s.audit.Record(ctx, actor, audit.Entry{
 		Action: action, TargetType: "service_type", TargetID: st.ID, Summary: st.Name,

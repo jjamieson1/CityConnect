@@ -227,13 +227,22 @@ function GlobalSearch() {
 }
 
 /**
- * Three-state theme control. "System" is the default and stamps nothing, so
- * the page follows the operating system; an explicit choice stamps data-theme
- * and wins in both directions.
+ * Three-state theme control.
+ *
+ * Light is the default: the console is a workplace tool used all day beside
+ * printed forms and other municipal systems, and it should look the same on
+ * every desk rather than depending on how each machine happens to be set up.
+ *
+ * "System" is still offered and still follows the operating system — it is
+ * simply no longer what a new install starts on. An explicit choice stamps
+ * data-theme and wins in both directions; "system" stamps nothing.
+ *
+ * The same default is applied in index.html before first paint, so a machine
+ * set to dark does not flash dark on the way in. Both places must agree.
  */
 function ThemeToggle() {
   const [theme, setTheme] = useState<"system" | "light" | "dark">(
-    () => (localStorage.getItem("cc-theme") as "system" | "light" | "dark") ?? "system",
+    () => (localStorage.getItem("cc-theme") as "system" | "light" | "dark") ?? "light",
   );
 
   useEffect(() => {

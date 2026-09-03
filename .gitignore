@@ -33,3 +33,20 @@ coverage.out
 # Development environment state and local overrides
 .dev/
 scripts/dev.env
+
+# Editor swap/backup files. A vim swap of an ignored env file mirrors its
+# contents but is not covered by that file's ignore rule, and gitleaks cannot
+# read the binary swap format — so an unignored swap is an uncaught secret.
+*.swp
+*.swo
+*.swn
+*~
+.*.sw[a-p]
+
+# Generated security-scan output. One directory per scan run, so this grows
+# without bound; security/config.json (the check manifest) stays tracked
+# because it is the contract, and the current health bundle is regenerated
+# by `security-dashboard bundle`.
+/security/runs/
+/security/dashboard.html
+/security/badge.svg

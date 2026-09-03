@@ -1,0 +1,32 @@
+{
+  "app": {
+    "name": "CityConnect",
+    "description": "City services portal (C2 SSO client)"
+  },
+  "manualDoc": "",
+  "standards": [
+    { "name": "OWASP Top 10", "note": "Covered by SAST + tests" },
+    { "name": "OWASP ASVS", "note": "Verification checklist — see mapping below" }
+  ],
+  "asvs": {
+    "targetLevel": "L2",
+    "note": "OWASP ASVS Level 2 — handles resident personal data; authenticates via C2 SSO (OIDC client).",
+    "requirements": [
+      { "id": "V2 Authentication", "name": "Login via C2 SSO (OIDC client)", "coverage": "automated", "evidence": "c2/oidc verification tests" },
+      { "id": "V3 Session Management", "name": "Secure session cookies + CSRF", "coverage": "automated", "evidence": "session tests" },
+      { "id": "V4 Access Control", "name": "Resident / staff authorization", "coverage": "automated", "evidence": "access-control tests" },
+      { "id": "V7 Errors & Logging", "name": "Tamper-evident audit trail", "coverage": "automated", "evidence": "verify-audit; audit tests" },
+      { "id": "V14 Configuration", "name": "No committed secrets; dependency hygiene", "coverage": "automated", "evidence": "gitleaks + govulncheck + npm audit" }
+    ]
+  },
+  "checks": [
+    { "key": "build", "name": "Compile", "category": "Quality", "tool": "go", "gating": true, "command": "go build ./...", "parser": "exit" },
+    { "key": "vet", "name": "go vet", "category": "Quality", "tool": "go", "gating": true, "command": "go vet ./...", "parser": "exit" },
+    { "key": "tests", "name": "Go tests", "category": "Quality", "tool": "go test", "gating": true, "command": "go test ./... -count=1", "parser": "gotest" },
+    { "key": "web-lint", "name": "SPA lint", "category": "Quality", "tool": "npm", "gating": false, "command": "npm run lint", "parser": "exit", "dir": "web" },
+    { "key": "govulncheck", "name": "Go dependency CVEs", "category": "Dependencies", "tool": "govulncheck", "gating": true, "command": "govulncheck ./...", "parser": "govulncheck", "installHint": "go install golang.org/x/vuln/cmd/govulncheck@latest" },
+    { "key": "gosec", "name": "Go SAST", "category": "SAST", "tool": "gosec", "gating": false, "command": "gosec -fmt=json ./internal/... ./cmd/...", "parser": "gosec-json", "installHint": "go install github.com/securego/gosec/v2/cmd/gosec@latest" },
+    { "key": "gitleaks", "name": "Secret scan", "category": "Secrets", "tool": "gitleaks", "gating": false, "command": "gitleaks git --no-banner --redact -v", "parser": "gitleaks", "installHint": "brew install gitleaks" },
+    { "key": "npm-audit-web", "name": "SPA deps (web)", "category": "Dependencies", "tool": "npm", "gating": false, "command": "npm audit --json", "parser": "npm-audit", "dir": "web" }
+  ]
+}

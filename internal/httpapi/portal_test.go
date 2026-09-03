@@ -409,3 +409,152 @@ func TestPortalLogoutReturnsToThePortal(t *testing.T) {
 		t.Errorf("GET /portal/me after sign-out -> %d, want 401", code)
 	}
 }
+
+// A request a citizen files through the portal is visible to that citizen and
+// to staff, and to nobody else.
+//
+// The existing isolation test covers a request an agent filed. This one starts
+// where the user does — the portal's own create path — because that is the
+// object whose ownership was never written down by a member of staff, and
+// because a citizen filing on their own behalf is now the common case.
+func TestCitizenCreatedRequestIsVisibleOnlyToTheOwnerAndStaff(t *testing.T) {
+	e := newEnv(t)
+
+	// The owner files it themselves through the portal.
+	owner := e.portalSignIn(t, "citizen-owner")
+	var created struct {
+		Reference string `json:"reference"`
+	}
+	if code := doJSON(t, owner, http.MethodPost, e.api.URL+"/api/portal/requests",
+		map[string]any{
+			"serviceTypeId": catalogID(t, e, owner, "POTHOLE"),
+			"subject":       "Pothole outside 14 Elm Street",
+			"description":   "Deep enough to damage a wheel.",
+			"address1":      "14 Elm Street",
+			"formData":      map[string]any{"size": "Medium"},
+		}, &created); code != http.StatusCreated {
+		t.Fatalf("citizen create -> %d", code)
+	}
+	if created.Reference == "" {
+		t.Fatal("no reference returned")
+	}
+
+	// 1. The owner can read it back, with its detail.
+	var mine struct {
+		Reference string `json:"reference"`
+		Subject   string `json:"subject"`
+	}
+	if code := doJSON(t, owner, http.MethodGet,
+		e.api.URL+"/api/portal/requests/"+created.Reference, nil, &mine); code != http.StatusOK {
+		t.Fatalf("owner GET own request -> %d", code)
+	}
+	if mine.Reference != created.Reference {
+		t.Errorf("owner got reference %q, want %q", mine.Reference, created.Reference)
+	}
+
+	// 2. Another citizen cannot — not the request, not its detail, not by
+	//    listing, and not by acting on it.
+	other := e.portalSignIn(t, "citizen-stranger")
+
+	if code := doJSON(t, other, http.MethodGet,
+		e.api.URL+"/api/portal/requests/"+created.Reference, nil, nil); code != http.StatusNotFound {
+		t.Errorf("stranger GET -> %d, want 404", code)
+	}
+	for action, body := range map[string]map[string]any{
+		"comments": {"body": "adding myself to this"},
+		"cancel":   {"reason": "no longer needed"},
+		"rating":   {"score": 1},
+	} {
+		if code := doJSON(t, other, http.MethodPost,
+			e.api.URL+"/api/portal/requests/"+created.Reference+"/"+action, body, nil,
+		); code != http.StatusNotFound {
+			t.Errorf("stranger POST %s -> %d, want 404", action, code)
+		}
+	}
+	var strangerList struct {
+		Items []struct {
+			Reference string `json:"reference"`
+		} `json:"items"`
+	}
+	doJSON(t, other, http.MethodGet, e.api.URL+"/api/portal/requests", nil, &strangerList)
+	for _, item := range strangerList.Items {
+		if item.Reference == created.Reference {
+			t.Error("the owner's request appeared in another citizen's list")
+		}
+	}
+
+	// 3. Signed out, it is not readable at all.
+	if code := doJSON(t, newJarClient(), http.MethodGet,
+		e.api.URL+"/api/portal/requests/"+created.Reference, nil, nil); code != http.StatusUnauthorized {
+		t.Errorf("anonymous GET -> %d, want 401", code)
+	}
+
+	// 4. Staff can see it. This half matters as much as the isolation: a
+	//    request nobody at the City can read is not a service request.
+	e.signIn("staff-admin", "admin@city.example", domain.RoleAdmin)
+	var staffList struct {
+		Items []struct {
+			ID        string `json:"id"`
+			Reference string `json:"reference"`
+		} `json:"items"`
+	}
+	if code := e.get("/api/requests?q="+created.Reference, &staffList); code != http.StatusOK {
+		t.Fatalf("staff list -> %d", code)
+	}
+	var id string
+	for _, item := range staffList.Items {
+		if item.Reference == created.Reference {
+			id = item.ID
+		}
+	}
+	if id == "" {
+		t.Fatalf("staff cannot find %s: %+v", created.Reference, staffList.Items)
+	}
+	var full map[string]any
+	if code := e.get("/api/requests/"+id, &full); code != http.StatusOK {
+		t.Errorf("staff GET the request -> %d, want 200", code)
+	}
+}
+
+// The refusal must not double as a way to discover which references exist.
+//
+// A 404 for somebody else's request and a 404 for a reference that was never
+// issued have to be identical — same status, same body. Anything that differs
+// turns the endpoint into an oracle: a citizen could walk the reference
+// sequence and learn how many requests the City holds and for whom.
+func TestPortalRefusalDoesNotRevealWhetherARequestExists(t *testing.T) {
+	e := newEnv(t)
+
+	owner := e.portalSignIn(t, "citizen-owner")
+	var created struct {
+		Reference string `json:"reference"`
+	}
+	if code := doJSON(t, owner, http.MethodPost, e.api.URL+"/api/portal/requests",
+		map[string]any{
+			"serviceTypeId": catalogID(t, e, owner, "GENERAL"),
+			"subject":       "A question",
+			"description":   "About recycling.",
+		}, &created); code != http.StatusCreated {
+		t.Fatalf("create -> %d", code)
+	}
+
+	stranger := e.portalSignIn(t, "citizen-stranger")
+
+	realBody, realCode := rawGet(t, stranger, e.api.URL+"/api/portal/requests/"+created.Reference)
+	fakeBody, fakeCode := rawGet(t, stranger, e.api.URL+"/api/portal/requests/SR-2026-999999")
+
+	if realCode != http.StatusNotFound || fakeCode != http.StatusNotFound {
+		t.Fatalf("codes were %d (real) and %d (invented), want 404 for both", realCode, fakeCode)
+	}
+
+	// Two fields legitimately differ and carry nothing about existence:
+	// `instance` echoes the path that was asked for, and `requestId` is a
+	// per-request correlation id. Everything else must match exactly — a
+	// different detail string, code, or title for a real reference is what
+	// would turn the refusal into an oracle.
+	if got, want := scrubProblem(t, realBody), scrubProblem(t, fakeBody); got != want {
+		t.Errorf("the refusals differ once the echoed path and correlation id are"+
+			" set aside, so the endpoint confirms which references are real:\n"+
+			" real:     %s\n invented: %s", got, want)
+	}
+}

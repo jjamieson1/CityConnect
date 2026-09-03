@@ -1,6 +1,6 @@
 module github.com/jjamieson1/CityConnect
 
-go 1.25.5
+go 1.25.13
 
 require (
 	github.com/glebarez/sqlite v1.11.0

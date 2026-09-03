@@ -367,6 +367,29 @@ func TestEndSessionURLForUsesTheGivenReturnAddress(t *testing.T) {
 	}
 }
 
+// With no registered return address, sign-out must still work: omit the
+// parameter and let C2 show its own signed-out page. Sending an unregistered
+// value instead gets `post_logout_redirect_uri invalid` and strands the user.
+func TestEndSessionURLOmitsUnsetReturnAddress(t *testing.T) {
+	p, _, _ := newTestProvider(t)
+
+	got, err := p.EndSessionURLFor(context.Background(), "the-id-token", "")
+	if err != nil {
+		t.Fatalf("end session url: %v", err)
+	}
+	u, _ := url.Parse(got)
+	if _, present := u.Query()["post_logout_redirect_uri"]; present {
+		t.Errorf("post_logout_redirect_uri present but unset: %q", got)
+	}
+	// The rest of the sign-out must survive — this is still a real logout.
+	if u.Query().Get("id_token_hint") != "the-id-token" {
+		t.Error("id_token_hint was dropped")
+	}
+	if u.Query().Get("client_id") == "" {
+		t.Error("client_id was dropped")
+	}
+}
+
 func TestCheckSucceedsAgainstStub(t *testing.T) {
 	p, _, _ := newTestProvider(t)
 	if err := p.Check(context.Background()); err != nil {

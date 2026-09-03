@@ -105,11 +105,16 @@ type C2Config struct {
 	// CalloutAppKey / CalloutAppSecret enable the legacy app_key auth mode on
 	// the inbound Service Card callout. Signed JWT is used whenever the
 	// Authorization header is present; these are only consulted otherwise.
-	CalloutAppKey       string
-	CalloutAppSecret    string
-	CalloutAllowAppKey  bool
-	CalloutCacheTTL     time.Duration
-	CalloutMaxTasks     int
+	CalloutAppKey      string
+	CalloutAppSecret   string
+	CalloutAllowAppKey bool
+	CalloutCacheTTL    time.Duration
+	CalloutMaxTasks    int
+	// CalloutQuickLinks are service-type codes offered on the Service Card as
+	// "start a new request" shortcuts, alongside the citizen's open requests.
+	// Codes rather than labels: the name and wording come from the catalogue,
+	// so renaming a service in the console follows through to the card.
+	CalloutQuickLinks   []string
 	DiscoveryCacheTTL   time.Duration
 	JWKSMinRefreshEvery time.Duration
 	HTTPTimeout         time.Duration
@@ -183,11 +188,13 @@ func Load() (*Config, error) {
 			ClientPrivateKeyPEM: envFileOrValue("CC_C2_CLIENT_PRIVATE_KEY_PEM", "CC_C2_CLIENT_PRIVATE_KEY_FILE"),
 			ClientKeyID:         env("CC_C2_CLIENT_KID", ""),
 
-			CalloutAppKey:       env("CC_C2_CALLOUT_APP_KEY", ""),
-			CalloutAppSecret:    env("CC_C2_CALLOUT_APP_SECRET", ""),
-			CalloutAllowAppKey:  envBool("CC_C2_CALLOUT_ALLOW_APP_KEY", false),
-			CalloutCacheTTL:     envDuration("CC_C2_CALLOUT_CACHE_TTL", 20*time.Second),
-			CalloutMaxTasks:     envInt("CC_C2_CALLOUT_MAX_TASKS", 10),
+			CalloutAppKey:      env("CC_C2_CALLOUT_APP_KEY", ""),
+			CalloutAppSecret:   env("CC_C2_CALLOUT_APP_SECRET", ""),
+			CalloutAllowAppKey: envBool("CC_C2_CALLOUT_ALLOW_APP_KEY", false),
+			CalloutCacheTTL:    envDuration("CC_C2_CALLOUT_CACHE_TTL", 20*time.Second),
+			CalloutMaxTasks:    envInt("CC_C2_CALLOUT_MAX_TASKS", 10),
+			CalloutQuickLinks: envListOr("CC_C2_CALLOUT_QUICK_LINKS",
+				[]string{"GENERAL", "MISSED-COLLECTION"}),
 			DiscoveryCacheTTL:   envDuration("CC_C2_DISCOVERY_TTL", time.Hour),
 			JWKSMinRefreshEvery: envDuration("CC_C2_JWKS_MIN_REFRESH", time.Minute),
 			HTTPTimeout:         envDuration("CC_C2_HTTP_TIMEOUT", 10*time.Second),
@@ -241,9 +248,6 @@ func Load() (*Config, error) {
 	if c.C2.RedirectURL == "" {
 		c.C2.RedirectURL = c.PublicURL + c.BasePath + "/api/auth/callback"
 	}
-	if c.C2.PostLogoutRedirectURL == "" {
-		c.C2.PostLogoutRedirectURL = c.PublicURL + c.BasePath + "/"
-	}
 	// Without a distinct portal origin the two apps share one, which is the
 	// single-app arrangement: the portal keeps working, it simply does not get
 	// its own cookie jar.
@@ -253,9 +257,22 @@ func Load() (*Config, error) {
 	if c.C2.PortalRedirectURL == "" {
 		c.C2.PortalRedirectURL = c.PortalPublicURL + "/api/auth/callback"
 	}
-	if c.C2.PortalPostLogoutRedirectURL == "" {
-		c.C2.PortalPostLogoutRedirectURL = c.PortalPublicURL + "/"
-	}
+
+	// The post-logout return addresses are deliberately NOT derived, unlike
+	// the redirect URIs above.
+	//
+	// C2 exact-matches both against its registration list, so a derived value
+	// is one nobody registered — C2 answers `post_logout_redirect_uri invalid`
+	// and the user is stranded on an error page. Sending nothing is legal
+	// OIDC: C2 ends the session and shows its own signed-out page. Worse
+	// looking, but it works.
+	//
+	// The asymmetry is about when the failure shows up. A wrong redirect_uri
+	// breaks sign-in, so it is found before anyone can use the system. A wrong
+	// post_logout_redirect_uri breaks nothing until the first person signs
+	// out, by which time the deployment looks healthy. Defaulting to a value
+	// that cannot work turns a missing nicety into a broken one, so these stay
+	// unset until an operator registers them and says so.
 	if c.C2.PartnerBaseURL == "" {
 		c.C2.PartnerBaseURL = c.C2.PortalOrigin
 	}

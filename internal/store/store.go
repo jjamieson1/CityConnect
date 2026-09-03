@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"reflect"
 	"strings"
 	"time"
 
@@ -198,4 +199,84 @@ func Exists(q *gorm.DB) (bool, error) {
 func LikeEscape(s string) string {
 	r := strings.NewReplacer("\\", "\\\\", "%", "\\%", "_", "\\_")
 	return r.Replace(s)
+}
+
+// Save writes a record, creating it when it has no primary key yet.
+//
+// Use this instead of gorm's Save for any model carrying a `default:true`
+// boolean. On insert, gorm omits fields holding their zero value and lets the
+// database apply the column default — so `false` on a `default:true` column is
+// stored as `true`. The record comes back the opposite of what was asked for,
+// with no error anywhere.
+//
+// That turns "create this, but not switched on yet" into "create this and
+// switch it on", which is the dangerous direction for a service catalogue
+// entry or a routing rule.
+//
+// The insert itself is left alone and the affected columns are corrected
+// immediately afterwards. Forcing them into the INSERT instead — via
+// Select — looks tidier and is a trap: Select("*") does not override a column
+// default, naming every column puts the primary key in the statement in a way
+// that stops it being written at all, and Save discards the selection on its
+// insert path regardless. One extra UPDATE, only when a false is actually
+// present, is the version that works.
+func Save(tx *gorm.DB, model any, pk string) error {
+	if pk != "" {
+		return Translate(tx.Save(model).Error)
+	}
+	// Captured before the insert: gorm writes the column defaults back into the
+	// struct as part of Create, so afterwards the false values are already gone
+	// and there is nothing left to notice.
+	cols := falseDefaultedColumns(tx, model)
+
+	if err := tx.Create(model).Error; err != nil {
+		return Translate(err)
+	}
+	if len(cols) > 0 {
+		// UpdateColumns rather than Updates: this is repairing the row just
+		// written, not a change worth touching UpdatedAt or firing hooks for.
+		return Translate(tx.Model(model).UpdateColumns(cols).Error)
+	}
+	return nil
+}
+
+// falseDefaultedColumns finds the boolean fields that are false but whose
+// column carries a default, which are exactly the ones an insert loses.
+//
+// Returns nil when the schema cannot be parsed, leaving gorm's ordinary
+// behaviour in place rather than failing the write.
+func falseDefaultedColumns(tx *gorm.DB, model any) map[string]any {
+	stmt := &gorm.Statement{DB: tx}
+	if err := stmt.Parse(model); err != nil || stmt.Schema == nil {
+		return nil
+	}
+	rv := reflect.Indirect(reflect.ValueOf(model))
+	if rv.Kind() != reflect.Struct {
+		return nil
+	}
+
+	var cols map[string]any
+	for _, f := range stmt.Schema.Fields {
+		if f.DBName == "" || !f.Creatable || !f.HasDefaultValue || f.PrimaryKey {
+			continue
+		}
+		if f.FieldType.Kind() != reflect.Bool {
+			continue
+		}
+		// Only columns that default to true can lose a false. A `default:false`
+		// column stores false correctly, and repairing it is a pointless write.
+		if !strings.EqualFold(f.DefaultValue, "true") && f.DefaultValue != "1" {
+			continue
+		}
+		// No zero check here: false *is* the zero value, and false on a
+		// defaulted column is precisely the case being repaired.
+		v, _ := f.ValueOf(stmt.Context, rv)
+		if b, ok := v.(bool); ok && !b {
+			if cols == nil {
+				cols = map[string]any{}
+			}
+			cols[f.DBName] = false
+		}
+	}
+	return cols
 }

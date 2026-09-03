@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -23,6 +24,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/jjamieson1/CityConnect/internal/c2/oidc"
+	"github.com/jjamieson1/CityConnect/internal/catalog"
 	"github.com/jjamieson1/CityConnect/internal/config"
 	"github.com/jjamieson1/CityConnect/internal/contacts"
 	"github.com/jjamieson1/CityConnect/internal/domain"
@@ -78,6 +80,7 @@ type Service struct {
 	cfg      *config.Config
 	oidc     *oidc.Provider
 	contacts *contacts.Service
+	catalog  *catalog.Service
 	requests *requests.Service
 	log      *slog.Logger
 
@@ -93,10 +96,10 @@ type cacheEntry struct {
 // NewService builds the callout service.
 func NewService(
 	db *gorm.DB, cfg *config.Config, provider *oidc.Provider,
-	cont *contacts.Service, reqs *requests.Service, log *slog.Logger,
+	cont *contacts.Service, cat *catalog.Service, reqs *requests.Service, log *slog.Logger,
 ) *Service {
 	return &Service{
-		db: db, cfg: cfg, oidc: provider, contacts: cont, requests: reqs,
+		db: db, cfg: cfg, oidc: provider, contacts: cont, catalog: cat, requests: reqs,
 		log: log.With("component", "callout"), cache: map[string]cacheEntry{},
 	}
 }
@@ -183,20 +186,37 @@ func (s *Service) render(ctx context.Context, contact *domain.Contact, open []do
 		CTA: s.cfg.PortalPublicURL,
 	}
 
-	if len(open) == 0 {
-		b.Description = "You have no open service requests with the City."
-		b.Contact = s.defaultContact(ctx)
-		return b
-	}
-
 	max := s.cfg.C2.CalloutMaxTasks
 	if max <= 0 {
 		max = 10
 	}
 
+	// Ways to start something new, offered whether or not the citizen has
+	// anything open. Resolved first so the request list knows what room is left.
+	quick := s.quickLinks(ctx)
+
+	if len(open) == 0 {
+		b.Description = "You have no open service requests with the City. " +
+			"You can report something new below."
+		b.Tasks = quick
+		b.Contact = s.defaultContact(ctx)
+		return b
+	}
+
+	// The citizen's own requests come first and keep at least half the card:
+	// somebody with ten open requests is on this card to see them, not to be
+	// sold a shortcut. Quick links then fill whatever is left.
+	budget := max - len(quick)
+	if floor := (max + 1) / 2; budget < floor {
+		budget = floor
+	}
+	if len(quick) > max-budget {
+		quick = quick[:max-budget]
+	}
+
 	shown := open
-	if len(shown) > max {
-		shown = shown[:max]
+	if len(shown) > budget {
+		shown = shown[:budget]
 	}
 
 	for _, r := range shown {
@@ -230,10 +250,71 @@ func (s *Service) render(ctx context.Context, contact *domain.Contact, open []do
 		b.Description += fmt.Sprintf(" Showing the %d most recently updated.", len(shown))
 	}
 
+	b.Tasks = append(b.Tasks, quick...)
+
 	// Prefer the department that owns the newest request, so the contact block
 	// points at the people actually working it.
 	b.Contact = s.contactFor(ctx, newest.DepartmentID)
 	return b
+}
+
+// quickLinks builds the "start something new" rows: one per configured service
+// code, then an invitation to browse everything else.
+//
+// The codes are resolved against the live catalogue rather than trusted. A
+// service that has been retired, hidden from the public, or renamed out from
+// under the configuration would otherwise be advertised on every citizen's C2
+// dashboard, leading to a page the portal refuses to serve — and nobody would
+// hear about it, because C2 renders the card silently and a citizen who hits a
+// dead end rarely reports it. Skipping is the safe failure: the card is one row
+// shorter and everything on it works.
+func (s *Service) quickLinks(ctx context.Context) []Task {
+	tasks := make([]Task, 0, len(s.cfg.C2.CalloutQuickLinks)+1)
+
+	for _, code := range s.cfg.C2.CalloutQuickLinks {
+		code = strings.TrimSpace(code)
+		if code == "" {
+			continue
+		}
+
+		st, err := s.catalog.GetServiceTypeByCode(ctx, code)
+		if err != nil {
+			s.log.WarnContext(ctx, "quick link names an unknown service type",
+				"code", code, "hint", "check CC_C2_CALLOUT_QUICK_LINKS against the catalogue")
+			continue
+		}
+		// The same test the portal applies before accepting a report. Offering
+		// what it would refuse is worse than not offering it.
+		if !st.Active || !st.PublicVisible {
+			s.log.WarnContext(ctx, "quick link names a service citizens cannot submit",
+				"code", code, "active", st.Active, "publicVisible", st.PublicVisible)
+			continue
+		}
+
+		tasks = append(tasks, Task{
+			Name:        st.Name,
+			Description: firstNonEmpty(st.Description, "Report this to the City."),
+			URL:         fmt.Sprintf("%s/new/%s", s.cfg.PortalPublicURL, url.PathEscape(st.Code)),
+		})
+	}
+
+	// Always last, and always valid — it is the portal's own front page, so it
+	// needs no catalogue lookup and cannot go stale.
+	tasks = append(tasks, Task{
+		Name:        "Browse all city services",
+		Description: "See everything you can report or request online.",
+		URL:         s.cfg.PortalPublicURL + "/",
+	})
+	return tasks
+}
+
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if strings.TrimSpace(v) != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 // describe renders the per-request line: status, when it last moved, and the

@@ -112,7 +112,7 @@ func run() error {
 	}
 	requestSvc.SetWebhooks(webhookSvc)
 
-	calloutSvc := callout.NewService(db, cfg, provider, contactSvc, requestSvc, log)
+	calloutSvc := callout.NewService(db, cfg, provider, contactSvc, catalogSvc, requestSvc, log)
 	portalSvc := portal.NewService(db, cfg, provider, contactSvc, catalogSvc, requestSvc, auditSvc, log)
 
 	attachments, err := requests.NewAttachmentStore(cfg.AttachmentDir, cfg.AttachmentMaxMB, nil)

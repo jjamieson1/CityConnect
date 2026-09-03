@@ -1,9 +1,16 @@
 <!doctype html>
-<html lang="en">
+<!--
+  data-theme is set here rather than left to the operating system. The portal
+  has no theme control — a citizen reporting a pothole is not looking for one —
+  so this is the whole of its theming, and the City's public face should not
+  change appearance based on a visitor's device settings.
+-->
+<html lang="en" data-theme="light">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="color-scheme" content="light dark" />
+    <!-- Light only, so native controls and scrollbars match the page. -->
+    <meta name="color-scheme" content="light" />
     <meta name="description" content="Report a problem to the City and follow what happens to it." />
     <title>City services</title>
   </head>
