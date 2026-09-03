@@ -66,6 +66,12 @@ type Server struct {
 	// is guessable in a way a session cookie is not, so the throttle is a
 	// security control there rather than capacity protection.
 	tracker *rateLimiter
+	// submitter limits the unauthenticated form surface — token issuance and
+	// submission — separately again, so a flood of reports cannot be paid for
+	// out of the tracking allowance or vice versa.
+	submitter *rateLimiter
+	// forms issues the single-use tokens that gate anonymous submission.
+	forms   *formTokens
 	started time.Time
 }
 
@@ -74,13 +80,15 @@ func New(d Deps) *Server {
 	trustProxyHeaders = d.Config.Sec.TrustProxyHeaders
 
 	s := &Server{
-		Deps:    d,
-		cfg:     d.Config,
-		log:     d.Log,
-		agents:  d.Agents,
-		limiter: newRateLimiter(d.Config.Sec.RateLimitPerMin),
-		tracker: newRateLimiter(d.Config.Sec.TrackRateLimitPerMin),
-		started: time.Now(),
+		Deps:      d,
+		cfg:       d.Config,
+		log:       d.Log,
+		agents:    d.Agents,
+		limiter:   newRateLimiter(d.Config.Sec.RateLimitPerMin),
+		tracker:   newRateLimiter(d.Config.Sec.TrackRateLimitPerMin),
+		submitter: newRateLimiter(d.Config.Sec.PublicFormRatePerMin),
+		forms:     newFormTokens(d.Config.Sec.FormTokenSecret, d.Config.Sec.FormTokenMinAge),
+		started:   time.Now(),
 	}
 	s.routes()
 	return s

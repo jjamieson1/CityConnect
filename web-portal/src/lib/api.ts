@@ -27,7 +27,10 @@ export class ApiError extends Error {
 // scoped here and never needs SameSite=None.
 const BASE = `${import.meta.env.BASE_URL.replace(/\/$/, "")}/api/portal`;
 
-async function call<T>(path: string, opts: { method?: string; body?: unknown } = {}): Promise<T> {
+async function call<T>(
+  path: string,
+  opts: { method?: string; body?: unknown; idempotencyKey?: string } = {},
+): Promise<T> {
   const init: RequestInit = {
     method: opts.method ?? "GET",
     credentials: "same-origin",
@@ -36,6 +39,9 @@ async function call<T>(path: string, opts: { method?: string; body?: unknown } =
   if (opts.body !== undefined) {
     init.headers = { ...init.headers, "Content-Type": "application/json" };
     init.body = JSON.stringify(opts.body);
+  }
+  if (opts.idempotencyKey) {
+    init.headers = { ...init.headers, "Idempotency-Key": opts.idempotencyKey };
   }
 
   const res = await fetch(`${BASE}${path}`, init);
@@ -94,7 +100,15 @@ export const portalApi = {
       body: { referenceNumber, verificationValue },
     }),
 
-  report: (body: Record<string, unknown>) => call<MyRequest>("/requests", { method: "POST", body }),
+  // The single-use token an anonymous submission has to present. Fetched when
+  // the form opens rather than when it is sent, because the server also checks
+  // that a plausible amount of time passed in between.
+  formToken: () => call<{ token: string }>("/form-token"),
+
+  // idempotencyKey makes a double-click harmless: the second POST replays the
+  // first result instead of filing a second work order for the same pothole.
+  report: (body: Record<string, unknown>, idempotencyKey?: string) =>
+    call<MyRequest>("/requests", { method: "POST", body, idempotencyKey }),
   comment: (reference: string, text: string) =>
     call<{ status: string }>(`/requests/${encodeURIComponent(reference)}/comments`, {
       method: "POST", body: { body: text },

@@ -7,8 +7,25 @@ import (
 	"github.com/jjamieson1/CityConnect/internal/domain"
 )
 
-// anonymousReport files a report with a client that has never signed in.
-func anonymousReport(t *testing.T, e *env, subject string) map[string]any {
+// formToken fetches the single-use token an anonymous submission must present.
+func formToken(t *testing.T, e *env) string {
+	t.Helper()
+
+	var issued struct {
+		Token string `json:"token"`
+	}
+	if code := doJSON(t, newJarClient(), http.MethodGet,
+		e.api.URL+"/api/portal/form-token", nil, &issued); code != http.StatusOK {
+		t.Fatalf("form-token -> %d", code)
+	}
+	if issued.Token == "" {
+		t.Fatal("no form token issued; anonymous reporting is impossible without one")
+	}
+	return issued.Token
+}
+
+// publicServiceType returns the id of a service a member of the public can file.
+func publicServiceType(t *testing.T, e *env, code string) string {
 	t.Helper()
 
 	var catalog struct {
@@ -17,26 +34,31 @@ func anonymousReport(t *testing.T, e *env, subject string) map[string]any {
 			Code string `json:"code"`
 		} `json:"items"`
 	}
-	if code := doJSON(t, newJarClient(), http.MethodGet, e.api.URL+"/api/portal/catalog", nil, &catalog); code != 200 {
-		t.Fatalf("catalog -> %d", code)
+	if status := doJSON(t, newJarClient(), http.MethodGet,
+		e.api.URL+"/api/portal/catalog", nil, &catalog); status != 200 {
+		t.Fatalf("catalog -> %d", status)
 	}
-	var serviceType string
 	for _, c := range catalog.Items {
-		if c.Code == "POTHOLE" {
-			serviceType = c.ID
+		if c.Code == code {
+			return c.ID
 		}
 	}
-	if serviceType == "" {
-		t.Fatal("POTHOLE is not in the public catalogue")
-	}
+	t.Fatalf("%s is not in the public catalogue", code)
+	return ""
+}
+
+// anonymousReport files a report with a client that has never signed in.
+func anonymousReport(t *testing.T, e *env, subject string) map[string]any {
+	t.Helper()
 
 	var created map[string]any
 	code := doJSON(t, newJarClient(), http.MethodPost, e.api.URL+"/api/portal/requests", map[string]any{
-		"serviceTypeId": serviceType,
+		"serviceTypeId": publicServiceType(t, e, "POTHOLE"),
 		"subject":       subject,
 		"description":   "Reported by someone who did not want an account.",
 		"address1":      "44 Elm Street",
 		"formData":      map[string]any{"size": "Medium"},
+		"formToken":     formToken(t, e),
 	}, &created)
 	if code != http.StatusCreated {
 		t.Fatalf("anonymous report -> %d, want 201", code)
@@ -177,19 +199,7 @@ func TestSignedInReportStillAttributedAndTrackable(t *testing.T) {
 func TestSubmissionChannelCannotBeSetByTheClient(t *testing.T) {
 	e := newEnv(t)
 
-	var catalog struct {
-		Items []struct {
-			ID   string `json:"id"`
-			Code string `json:"code"`
-		} `json:"items"`
-	}
-	doJSON(t, newJarClient(), http.MethodGet, e.api.URL+"/api/portal/catalog", nil, &catalog)
-	var serviceType string
-	for _, c := range catalog.Items {
-		if c.Code == "POTHOLE" {
-			serviceType = c.ID
-		}
-	}
+	serviceType := publicServiceType(t, e, "POTHOLE")
 
 	// The body cannot even name these fields: the portal decoder rejects
 	// unknown ones outright, so an attempt to choose the channel or the contact
@@ -204,6 +214,7 @@ func TestSubmissionChannelCannotBeSetByTheClient(t *testing.T) {
 			"subject":       "Trying to look authenticated",
 			"address1":      "1 Nowhere Road",
 			"formData":      map[string]any{"size": "Medium"},
+			"formToken":     formToken(t, e),
 		}
 		for k, v := range smuggled {
 			body[k] = v
@@ -221,6 +232,7 @@ func TestSubmissionChannelCannotBeSetByTheClient(t *testing.T) {
 		"subject":       "An ordinary anonymous report",
 		"address1":      "1 Nowhere Road",
 		"formData":      map[string]any{"size": "Medium"},
+		"formToken":     formToken(t, e),
 	}, &created)
 	if code != http.StatusCreated {
 		t.Fatalf("report -> %d", code)

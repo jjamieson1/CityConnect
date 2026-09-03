@@ -291,6 +291,26 @@ function Report({ signedIn }: { signedIn: boolean }) {
     subject: "", description: "", address1: "", city: "", postalCode: "",
   });
   const [extra, setExtra] = useState<Record<string, unknown>>({});
+  // The honeypot. Never shown, never focusable, never announced — so any value
+  // here came from something filling in fields it could not see.
+  const [websiteUrl, setWebsiteUrl] = useState("");
+
+  // Fetched on mount, not on submit: the server checks that a plausible amount
+  // of time passed between the two, which is what distinguishes a person
+  // filling in a form from a script posting one.
+  const formToken = useQuery({
+    queryKey: ["portal", "form-token", code],
+    queryFn: () => portalApi.formToken(),
+    enabled: !signedIn,
+    staleTime: Infinity,
+    gcTime: 0,
+    retry: false,
+  });
+
+  // Stable for the life of this form, so a double click replays the first
+  // result rather than filing a second report. A new key per attempt would
+  // defeat the point.
+  const [submissionKey] = useState(() => crypto.randomUUID());
 
   const submit = useMutation({
     mutationFn: () =>
@@ -300,7 +320,9 @@ function Report({ signedIn }: { signedIn: boolean }) {
         description: form.description,
         address1: form.address1, city: form.city, postalCode: form.postalCode,
         formData: extra,
-      }),
+        formToken: formToken.data?.token,
+        websiteUrl,
+      }, submissionKey),
     onSuccess: (created) => {
       void queryClient.invalidateQueries({ queryKey: ["portal", "requests"] });
       // An anonymous report cannot be reopened by reference, so there is no
@@ -322,7 +344,11 @@ function Report({ signedIn }: { signedIn: boolean }) {
     );
   }
 
-  const ready = !entry.requiresLocation || form.address1.trim().length > 0;
+  const locationGiven = !entry.requiresLocation || form.address1.trim().length > 0;
+  // Signed out, the submission also needs its token. Waiting for it here means
+  // a resident sees a disabled button for a moment rather than filling the
+  // whole form and being refused at the end.
+  const ready = locationGiven && (signedIn || !!formToken.data?.token);
 
   return (
     <div className="space-y-4">
@@ -343,6 +369,31 @@ function Report({ signedIn }: { signedIn: boolean }) {
         }}
       >
         {submit.error ? <ErrorNote error={submit.error} /> : null}
+
+        {/*
+          The honeypot.
+
+          Hidden three ways on purpose, because one is not enough: off-screen so
+          nobody sees it, tabIndex -1 so it is not in the keyboard order, and
+          aria-hidden so a screen reader never announces it. A field a resident
+          could reach by any route would be a trap for them rather than for a
+          bot, which is precisely the failure mode a CAPTCHA has.
+
+          Not display:none — some form fillers skip hidden inputs, and the point
+          is to be filled in.
+        */}
+        <div aria-hidden="true" className="absolute h-px w-px overflow-hidden" style={{ left: -9999 }}>
+          <label htmlFor="website-url">Leave this field empty</label>
+          <input
+            id="website-url"
+            name="websiteUrl"
+            type="text"
+            tabIndex={-1}
+            autoComplete="off"
+            value={websiteUrl}
+            onChange={(e) => setWebsiteUrl(e.target.value)}
+          />
+        </div>
 
         <Field label="What is the problem?" hint="A short summary helps us route it quickly.">
           <Input

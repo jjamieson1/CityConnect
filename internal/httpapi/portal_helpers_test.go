@@ -22,6 +22,14 @@ func newJarClient() *http.Client {
 // doJSON performs a request with an explicit client and returns the status.
 func doJSON(t *testing.T, client *http.Client, method, url string, body, out any) int {
 	t.Helper()
+	return doJSONWithHeaders(t, client, method, url, nil, body, out)
+}
+
+// doJSONWithHeaders is doJSON with extra request headers, for the cases where
+// the header is the point — an Idempotency-Key, say.
+func doJSONWithHeaders(t *testing.T, client *http.Client, method, url string,
+	headers map[string]string, body, out any) int {
+	t.Helper()
 
 	var reader io.Reader
 	if body != nil {
@@ -38,6 +46,9 @@ func doJSON(t *testing.T, client *http.Client, method, url string, body, out any
 	}
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
+	}
+	for k, v := range headers {
+		req.Header.Set(k, v)
 	}
 
 	resp, err := client.Do(req)

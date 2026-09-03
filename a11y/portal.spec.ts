@@ -70,6 +70,14 @@ async function stubApi(page: Page, { signedIn = false } = {}) {
     }),
   );
 
+  await page.route("**/api/portal/form-token", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ token: "test.0.token" }),
+    }),
+  );
+
   await page.route("**/api/portal/catalog", (route) =>
     route.fulfill({
       status: 200,
@@ -188,6 +196,40 @@ test("tracking failure is announced, not just displayed", async ({ page }) => {
 
   const results = await scan(page);
   expect(describe(results.violations)).toBe("");
+});
+
+/**
+ * The bot control must be invisible to the people it is not aimed at.
+ *
+ * A honeypot a resident can reach is a trap for the resident — which is the
+ * exact failure a puzzle CAPTCHA has, and the reason WCAG 2.2 SC 3.3.8 rules
+ * those out. So the field has to be hidden three ways at once, and axe cannot
+ * check any of them.
+ */
+test("the honeypot is unreachable by keyboard and hidden from assistive tech", async ({ page }) => {
+  await stubApi(page);
+  await page.goto("/new/POTHOLE");
+  await expect(page.getByLabel(/how big is it/i)).toBeVisible();
+
+  const honeypot = page.locator("#website-url");
+  await expect(honeypot).toHaveCount(1);
+
+  // Not announced: inside an aria-hidden subtree, so it is absent from the
+  // accessibility tree entirely.
+  await expect(page.getByRole("textbox", { name: /leave this field empty/i })).toHaveCount(0);
+
+  // Not focusable by tabbing.
+  await expect(honeypot).toHaveAttribute("tabindex", "-1");
+
+  // And not reachable in practice either — tab through the whole form and it
+  // must never take focus.
+  await page.locator("body").click({ position: { x: 2, y: 2 } });
+  for (let i = 0; i < 40; i++) {
+    await page.keyboard.press("Tab");
+    if (await honeypot.evaluate((el) => el === document.activeElement)) {
+      throw new Error(`the honeypot took focus after ${i + 1} tab stops`);
+    }
+  }
 });
 
 /**
