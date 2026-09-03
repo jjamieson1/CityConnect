@@ -61,6 +61,11 @@ type Server struct {
 	agents  *agents.Service
 	router  chi.Router
 	limiter *rateLimiter
+	// tracker limits public request tracking far more tightly than the general
+	// limiter does. That endpoint is unauthenticated and its verification value
+	// is guessable in a way a session cookie is not, so the throttle is a
+	// security control there rather than capacity protection.
+	tracker *rateLimiter
 	started time.Time
 }
 
@@ -74,6 +79,7 @@ func New(d Deps) *Server {
 		log:     d.Log,
 		agents:  d.Agents,
 		limiter: newRateLimiter(d.Config.Sec.RateLimitPerMin),
+		tracker: newRateLimiter(d.Config.Sec.TrackRateLimitPerMin),
 		started: time.Now(),
 	}
 	s.routes()

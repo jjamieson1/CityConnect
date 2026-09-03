@@ -136,6 +136,14 @@ type SecurityConfig struct {
 	CORSOrigins       []string
 	RateLimitPerMin   int
 	TrustProxyHeaders bool
+
+	// TrackRateLimitPerMin bounds public request tracking, which is
+	// unauthenticated and where the verification value is the only thing
+	// standing between a caller and somebody else's report. Much tighter than
+	// the general limit, and deliberately so: the reference format's entropy is
+	// sized against a throttled endpoint, so loosening this weakens the
+	// reference too.
+	TrackRateLimitPerMin int
 }
 
 // JobConfig tunes the background scheduler.
@@ -215,7 +223,10 @@ func Load() (*Config, error) {
 			CookieDomain:      env("CC_COOKIE_DOMAIN", ""),
 			CORSOrigins:       envList("CC_CORS_ORIGINS"),
 			RateLimitPerMin:   envInt("CC_RATE_LIMIT_PER_MIN", 600),
-			TrustProxyHeaders: envBool("CC_TRUST_PROXY_HEADERS", true),
+			// Ten a minute is generous for somebody typing a reference off a
+			// confirmation email and mean for anything guessing.
+			TrackRateLimitPerMin: envInt("CC_TRACK_RATE_LIMIT_PER_MIN", 10),
+			TrustProxyHeaders:    envBool("CC_TRUST_PROXY_HEADERS", true),
 		},
 
 		Job: JobConfig{

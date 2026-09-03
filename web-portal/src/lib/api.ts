@@ -84,6 +84,16 @@ export const portalApi = {
     call<Listing<MyRequest>>(`/requests${openOnly ? "?openOnly=true" : ""}`),
   request: (reference: string) => call<MyRequest>(`/requests/${encodeURIComponent(reference)}`),
 
+  // A POST, not a GET with query parameters. The contact detail is the only
+  // thing standing between a caller and somebody else's report, and a secret
+  // in a URL survives in browser history, proxy logs and referrer headers long
+  // after the lookup it authorised.
+  track: (referenceNumber: string, verificationValue: string) =>
+    call<MyRequest>("/requests/track", {
+      method: "POST",
+      body: { referenceNumber, verificationValue },
+    }),
+
   report: (body: Record<string, unknown>) => call<MyRequest>("/requests", { method: "POST", body }),
   comment: (reference: string, text: string) =>
     call<{ status: string }>(`/requests/${encodeURIComponent(reference)}/comments`, {

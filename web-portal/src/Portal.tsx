@@ -46,19 +46,29 @@ export default function Portal() {
             City services
           </Link>
 
-          {signedIn && (
-            <nav className="ml-auto flex items-center gap-1 text-sm" aria-label="Portal">
+          <nav className="ml-auto flex items-center gap-1 text-sm" aria-label="Portal">
+            {signedIn && (
               <Link className="rounded px-3 py-1.5 hover:bg-[var(--surface-0)]" to="/">
                 Report something
               </Link>
-              <Link className="rounded px-3 py-1.5 hover:bg-[var(--surface-0)]" to="/requests">
-                My reports
-              </Link>
-              <Button size="sm" onClick={() => void signOut()}>
-                Sign out
-              </Button>
-            </nav>
-          )}
+            )}
+            {/* Always offered, signed in or not. Someone who reported a pothole
+                without an account is exactly who needs this, and hiding it
+                behind sign-in is how they end up phoning instead. */}
+            <Link className="rounded px-3 py-1.5 hover:bg-[var(--surface-0)]" to="/track">
+              Check a report
+            </Link>
+            {signedIn && (
+              <>
+                <Link className="rounded px-3 py-1.5 hover:bg-[var(--surface-0)]" to="/requests">
+                  My reports
+                </Link>
+                <Button size="sm" onClick={() => void signOut()}>
+                  Sign out
+                </Button>
+              </>
+            )}
+          </nav>
         </div>
       </header>
 
@@ -70,6 +80,9 @@ export default function Portal() {
             <Routes>
               <Route index element={<Landing signedIn={signedIn} />} />
               <Route path="/new/:code" element={<Report signedIn={signedIn} />} />
+              {/* Public by design: no signedIn prop, because needing an account
+                  is precisely what this route exists to avoid. */}
+              <Route path="/track" element={<Track />} />
               <Route path="/requests" element={<MyReports signedIn={signedIn} />} />
               <Route path="/requests/:reference" element={<ReportDetail signedIn={signedIn} />} />
               <Route path="*" element={<Navigate to="/" replace />} />
@@ -650,6 +663,162 @@ function ReportDetail({ signedIn }: { signedIn: boolean }) {
 
       {r.canComment && <ReplyBox reference={r.reference} onSent={refresh} />}
       {r.canCancel && <WithdrawBox reference={r.reference} onDone={refresh} />}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Track — the "where is my report" loop, for people with no account
+// ---------------------------------------------------------------------------
+
+/**
+ * Tracking by reference and contact detail.
+ *
+ * This is the path most people take. Someone reports a pothole once, never
+ * makes an account, and comes back a week later wanting to know what happened —
+ * and if the only answer is "sign in", they phone the service centre instead.
+ *
+ * Two deliberate choices here. The limits are stated up front rather than
+ * discovered through a failed lookup: a report filed anonymously cannot be
+ * tracked at all, and saying so before someone types is kinder than a
+ * not-found afterwards. And the failure message is identical whatever went
+ * wrong, because the server cannot distinguish "no such reference" from
+ * "wrong email" without telling a stranger which references are real.
+ */
+function Track() {
+  const [reference, setReference] = useState("");
+  const [verification, setVerification] = useState("");
+
+  const lookup = useMutation({
+    mutationFn: () => portalApi.track(reference.trim(), verification.trim()),
+  });
+
+  const found = lookup.data;
+
+  return (
+    <div className="space-y-4">
+      <div>
+        <h1 className="text-2xl font-semibold">Check on a report</h1>
+        <p className="mt-1 text-ink-muted">
+          Enter the reference number from your confirmation message, and the email address or
+          phone number you gave when you reported it.
+        </p>
+      </div>
+
+      <form
+        className="cc-card space-y-4 p-5"
+        onSubmit={(e) => {
+          e.preventDefault();
+          lookup.mutate();
+        }}
+      >
+        <Field label="Reference number" hint="On your confirmation message, for example SR-7K4M-2QX9">
+          <Input
+            value={reference}
+            onChange={(e) => setReference(e.target.value)}
+            autoComplete="off"
+            spellCheck={false}
+            required
+          />
+        </Field>
+
+        <Field label="Email or phone number" hint="The one you gave when you made the report">
+          <Input
+            value={verification}
+            onChange={(e) => setVerification(e.target.value)}
+            autoComplete="off"
+            required
+          />
+        </Field>
+
+        {lookup.error && (
+          <p role="alert" className="text-sm" style={{ color: "var(--status-bad)" }}>
+            {(lookup.error as Error).message}
+          </p>
+        )}
+
+        <Button type="submit" variant="primary" disabled={lookup.isPending}>
+          {lookup.isPending ? "Looking…" : "Check my report"}
+        </Button>
+      </form>
+
+      <p className="text-sm text-ink-muted">
+        Reports made without giving your details cannot be checked here — there is nothing to
+        match them against. If you have an account,{" "}
+        <Link className="underline underline-offset-2" to="/requests">
+          all of your reports are listed here
+        </Link>
+        .
+      </p>
+
+      {found && (
+        <div className="cc-card p-5">
+          <div className="flex flex-wrap items-center gap-2">
+            <StatusPill request={found} />
+            <span className="font-mono text-xs text-ink-muted">{found.reference}</span>
+          </div>
+          <h2 className="mt-2 text-xl font-semibold">{found.subject}</h2>
+          <p className="mt-1 text-sm text-ink-muted">
+            {found.serviceType}
+            {found.department ? ` · handled by ${found.department}` : ""}
+          </p>
+
+          <dl className="mt-4 grid gap-3 text-sm sm:grid-cols-2">
+            <div>
+              <dt className="text-xs uppercase tracking-wide text-ink-muted">Reported</dt>
+              <dd>{formatDate(found.openedAt)}</dd>
+            </div>
+            {found.address && (
+              <div>
+                <dt className="text-xs uppercase tracking-wide text-ink-muted">Location</dt>
+                <dd>{found.address}</dd>
+              </div>
+            )}
+            {found.expectedBy && (
+              <div>
+                <dt className="text-xs uppercase tracking-wide text-ink-muted">Expected by</dt>
+                <dd>{formatDate(found.expectedBy)}</dd>
+              </div>
+            )}
+            {found.resolvedAt && (
+              <div>
+                <dt className="text-xs uppercase tracking-wide text-ink-muted">Completed</dt>
+                <dd>{formatDate(found.resolvedAt)}</dd>
+              </div>
+            )}
+          </dl>
+
+          {found.resolution && (
+            <div className="mt-4 rounded-md p-3 text-sm" style={{ background: "var(--surface-0)" }}>
+              <p className="font-medium">What we did</p>
+              <p className="mt-1 whitespace-pre-wrap">{found.resolution}</p>
+            </div>
+          )}
+
+          <h3 className="mt-5 text-sm font-semibold">Progress</h3>
+          {(found.updates?.length ?? 0) === 0 ? (
+            <p className="mt-2 text-sm text-ink-muted">
+              Nothing to report yet. We will be in touch.
+            </p>
+          ) : (
+            <ol className="mt-3 space-y-3">
+              {found.updates!.map((u, i) => (
+                <li
+                  key={i}
+                  className="rounded-md p-3 text-sm"
+                  style={{ background: "var(--surface-2)" }}
+                >
+                  <div className="mb-1 flex items-center gap-2 text-xs text-ink-muted">
+                    <span className="font-medium text-ink">{u.author}</span>
+                    <span>{formatDate(u.at)}</span>
+                  </div>
+                  <p className="whitespace-pre-wrap">{u.body}</p>
+                </li>
+              ))}
+            </ol>
+          )}
+        </div>
+      )}
     </div>
   );
 }
