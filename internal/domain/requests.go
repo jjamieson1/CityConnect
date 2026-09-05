@@ -345,9 +345,37 @@ type Attachment struct {
 	Checksum     string `gorm:"size:64;index" json:"checksum"`
 	UploadedByID string `gorm:"type:char(36);index" json:"uploadedById,omitempty"`
 	Visibility   CommentVisibility `gorm:"size:20;not null;default:'internal'" json:"visibility"`
-	ScanStatus   string `gorm:"size:20;not null;default:'pending'" json:"scanStatus"` // pending | clean | infected | skipped
-	ScanNote     string `gorm:"size:400" json:"scanNote,omitempty"`
+	ScanStatus   string            `gorm:"size:20;not null;default:'pending'" json:"scanStatus"`
+	ScanNote     string            `gorm:"size:400" json:"scanNote,omitempty"`
 }
+
+// Attachment scan statuses.
+//
+// The lifecycle is PENDING → CLEAN or INFECTED, with FAILED for a file the
+// scanner could not read. Only CLEAN leaves quarantine, so the status is not a
+// label on a stored file — it is the thing that decides whether the file is
+// stored where anyone can reach it at all.
+const (
+	// ScanPending means the file is quarantined and has not been cleared. It is
+	// where an upload lands when the scanner is unreachable: the request is
+	// still accepted, the file simply waits.
+	ScanPending = "pending"
+	// ScanClean is the only status that may be served.
+	ScanClean = "clean"
+	// ScanInfected files are deleted, never stored. The status exists for the
+	// audit trail, not for a row.
+	ScanInfected = "infected"
+	// ScanFailed means the scanner ran and could not decide — a corrupt archive,
+	// a file too large for it. Treated exactly like pending: not served.
+	ScanFailed = "failed"
+)
+
+// Servable reports whether a file may be sent to anybody.
+//
+// Nothing but a cleared file leaves the server. A pending or failed attachment
+// is one the scanner has not vouched for, and serving it because it happens to
+// be on disk is how a quarantine becomes decoration.
+func (a *Attachment) Servable() bool { return a.ScanStatus == ScanClean }
 
 // ReferenceCounter is a per-year, per-kind sequence.
 //

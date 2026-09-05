@@ -35,6 +35,13 @@ type Config struct {
 	AttachmentDir   string
 	AttachmentMaxMB int64
 
+	// ScannerAddress is the malware scanner: host:port for clamd over TCP, or a
+	// path for its unix socket. Empty means no scanner, and every upload is
+	// quarantined rather than stored — an unconfigured deployment holds files
+	// instead of trusting them.
+	ScannerAddress string
+	ScannerTimeout time.Duration
+
 	// ReferencePrefix leads every new request reference, so a municipality can
 	// quote BBY-7K4M-2QX9 rather than the default. Letters and digits only;
 	// the requests package normalises anything else away.
@@ -196,6 +203,8 @@ func Load() (*Config, error) {
 		AttachmentDir:        env("CC_ATTACHMENT_DIR", "./data/attachments"),
 		AttachmentMaxMB:      int64(envInt("CC_ATTACHMENT_MAX_MB", 25)),
 		ReferencePrefix:      env("CC_REFERENCE_PREFIX", ""),
+		ScannerAddress:       env("CC_SCANNER_ADDRESS", ""),
+		ScannerTimeout:       envDuration("CC_SCANNER_TIMEOUT", 30*time.Second),
 		BootstrapAdminSubs:   envList("CC_BOOTSTRAP_ADMIN_SUBS"),
 		BootstrapAdminEmails: envList("CC_BOOTSTRAP_ADMIN_EMAILS"),
 

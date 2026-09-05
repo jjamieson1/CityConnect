@@ -312,6 +312,9 @@ function Report({ signedIn }: { signedIn: boolean }) {
   // defeat the point.
   const [submissionKey] = useState(() => crypto.randomUUID());
 
+  const [photos, setPhotos] = useState<File[]>([]);
+  const [photoError, setPhotoError] = useState("");
+
   const submit = useMutation({
     mutationFn: () =>
       portalApi.report({
@@ -323,7 +326,26 @@ function Report({ signedIn }: { signedIn: boolean }) {
         formToken: formToken.data?.token,
         websiteUrl,
       }, submissionKey),
-    onSuccess: (created) => {
+    onSuccess: async (created) => {
+      // Photos go up after the report exists. If one fails, the report still
+      // stands — losing a resident's whole account of a hazard because a
+      // photo did not upload would be the wrong trade, so the failure is
+      // reported and the flow continues.
+      if (photos.length > 0) {
+        const grant = (created as { uploadGrant?: string }).uploadGrant ?? "";
+        for (const photo of photos) {
+          try {
+            await portalApi.attach(created.reference, grant, photo);
+          } catch (err) {
+            setPhotoError(
+              `We have your report, but ${photo.name} could not be attached. ` +
+                `Quote ${created.reference} if you want to send it another way.`,
+            );
+            console.warn("attachment failed", err);
+          }
+        }
+      }
+
       void queryClient.invalidateQueries({ queryKey: ["portal", "requests"] });
       // An anonymous report cannot be reopened by reference, so there is no
       // detail page to send them to. The confirmation route carries everything
@@ -439,6 +461,40 @@ function Report({ signedIn }: { signedIn: boolean }) {
               />
             </Field>
           </div>
+        </fieldset>
+
+        <fieldset className="rounded-md border p-4" style={{ borderColor: "var(--border)" }}>
+          <legend className="px-1 text-sm font-medium">Photos</legend>
+          <Field
+            label="Add a photo"
+            hint="A picture usually tells the crew more than a description can. Up to five."
+          >
+            <input
+              type="file"
+              accept="image/*"
+              // Opens the camera directly on a phone, which is where most of
+              // these are taken — standing next to the problem.
+              capture="environment"
+              multiple
+              className="block w-full text-sm"
+              onChange={(e) => {
+                setPhotoError("");
+                setPhotos(Array.from(e.target.files ?? []).slice(0, 5));
+              }}
+            />
+          </Field>
+          {photos.length > 0 && (
+            <ul className="mt-2 text-sm text-ink-muted">
+              {photos.map((p) => (
+                <li key={p.name}>{p.name}</li>
+              ))}
+            </ul>
+          )}
+          {photoError && (
+            <p role="alert" className="mt-2 text-sm" style={{ color: "var(--status-critical)" }}>
+              {photoError}
+            </p>
+          )}
         </fieldset>
 
         {entry.fields.length > 0 && (

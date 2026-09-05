@@ -20,6 +20,7 @@ import (
 	"github.com/jjamieson1/CityConnect/internal/catalog"
 	"github.com/jjamieson1/CityConnect/internal/config"
 	"github.com/jjamieson1/CityConnect/internal/contacts"
+	"github.com/jjamieson1/CityConnect/internal/domain"
 	"github.com/jjamieson1/CityConnect/internal/httpapi"
 	"github.com/jjamieson1/CityConnect/internal/interactions"
 	"github.com/jjamieson1/CityConnect/internal/jobs"
@@ -28,6 +29,7 @@ import (
 	"github.com/jjamieson1/CityConnect/internal/reports"
 	"github.com/jjamieson1/CityConnect/internal/requests"
 	"github.com/jjamieson1/CityConnect/internal/routing"
+	"github.com/jjamieson1/CityConnect/internal/scan"
 	"github.com/jjamieson1/CityConnect/internal/seed"
 	"github.com/jjamieson1/CityConnect/internal/store"
 	"github.com/jjamieson1/CityConnect/internal/webhooks"
@@ -116,7 +118,37 @@ func run() error {
 	calloutSvc := callout.NewService(db, cfg, provider, contactSvc, catalogSvc, requestSvc, log)
 	portalSvc := portal.NewService(db, cfg, provider, contactSvc, catalogSvc, requestSvc, auditSvc, log)
 
-	attachments, err := requests.NewAttachmentStore(cfg.AttachmentDir, cfg.AttachmentMaxMB, nil)
+	// Wire the malware scanner. With none configured the store quarantines
+	// every upload rather than storing files nobody has looked at — the
+	// operator finds out because attachments stop appearing, which is the right
+	// way round to fail.
+	var scanner requests.ScanFunc
+	if clamd := scan.New(cfg.ScannerAddress, cfg.ScannerTimeout); clamd != nil {
+		if err := clamd.Ping(ctx); err != nil {
+			// Not fatal: a scanner that is down at boot will very likely be up
+			// in a minute, and refusing to start the whole service over it
+			// would take the portal down with it. Uploads quarantine until it
+			// answers.
+			log.Warn("malware scanner is not answering; uploads will be quarantined",
+				"address", cfg.ScannerAddress, "error", err)
+		} else {
+			log.Info("malware scanner ready", "address", cfg.ScannerAddress)
+		}
+		scanner = func(ctx context.Context, path string) requests.ScanResult {
+			res, err := clamd.ScanFile(ctx, path)
+			if err != nil {
+				// Unreachable is not a verdict. Quarantine and say why.
+				log.ErrorContext(ctx, "malware scan failed; quarantining the upload", "error", err)
+				return requests.ScanResult{Status: domain.ScanPending, Note: "scanner unavailable"}
+			}
+			return requests.ScanResult{Status: res.Status, Note: res.Note}
+		}
+	} else {
+		log.Warn("no malware scanner configured; every upload will be quarantined",
+			"set", "CC_SCANNER_ADDRESS")
+	}
+
+	attachments, err := requests.NewAttachmentStore(cfg.AttachmentDir, cfg.AttachmentMaxMB, scanner)
 	if err != nil {
 		return err
 	}
