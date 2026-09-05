@@ -137,6 +137,27 @@ type SecurityConfig struct {
 	RateLimitPerMin   int
 	TrustProxyHeaders bool
 
+	// PublicFormRatePerMin bounds the unauthenticated form surface: issuing a
+	// submission token, and submitting with one. Generous for a person — who
+	// files one report, occasionally two — and mean for anything scripted.
+	//
+	// It is deliberately applied to token *issuance* as well as submission,
+	// because issuance is where the real cap lives: an anonymous submission
+	// needs a fresh single-use token, so a flood cannot outrun the rate at
+	// which tokens are handed out however many requests it sends.
+	PublicFormRatePerMin int
+
+	// FormTokenMinAge is the shortest time between a form being opened and
+	// submitted that we will believe came from a person. Zero disables the
+	// check, which is only sensible in a test.
+	FormTokenMinAge time.Duration
+
+	// FormTokenSecret signs those tokens. Leave it empty on a single instance
+	// and one is generated at boot; set it when running more than one, or a
+	// token issued by one instance will not verify at another and residents
+	// will see their submissions refused at random.
+	FormTokenSecret string
+
 	// TrackRateLimitPerMin bounds public request tracking, which is
 	// unauthenticated and where the verification value is the only thing
 	// standing between a caller and somebody else's report. Much tighter than
@@ -226,6 +247,9 @@ func Load() (*Config, error) {
 			// Ten a minute is generous for somebody typing a reference off a
 			// confirmation email and mean for anything guessing.
 			TrackRateLimitPerMin: envInt("CC_TRACK_RATE_LIMIT_PER_MIN", 10),
+			PublicFormRatePerMin: envInt("CC_PUBLIC_FORM_RATE_PER_MIN", 10),
+			FormTokenSecret:      env("CC_FORM_TOKEN_SECRET", ""),
+			FormTokenMinAge:      envDuration("CC_FORM_TOKEN_MIN_AGE", 2*time.Second),
 			TrustProxyHeaders:    envBool("CC_TRUST_PROXY_HEADERS", true),
 		},
 

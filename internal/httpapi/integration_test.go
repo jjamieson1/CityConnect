@@ -99,6 +99,11 @@ func newEnvWith(t *testing.T, withSeed bool) *env {
 			// control, and a test that cannot reach the limit cannot prove the
 			// control exists.
 			TrackRateLimitPerMin: 6,
+			PublicFormRatePerMin: 8,
+			// Zero so the suite does not have to sleep two seconds per
+			// submission. The min-age check itself is covered directly in
+			// formtoken_test.go, where it can be exercised precisely.
+			FormTokenMinAge: 0,
 		},
 		Job: config.JobConfig{Enabled: false, OutboxMaxAttempts: 3},
 		C2: config.C2Config{

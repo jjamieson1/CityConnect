@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -52,6 +53,10 @@ func (s *Server) mountPortal(r chi.Router) {
 		// is one and files anonymously if there is not — it is deliberately
 		// outside requireCitizen rather than branching inside it.
 		p.Post("/requests", s.handlePortalCreate)
+
+		// The token an anonymous submission has to present. Fetched when the
+		// form opens, spent when it is sent.
+		p.Get("/form-token", s.handlePortalFormToken)
 
 		p.Group(func(auth chi.Router) {
 			auth.Use(s.requireCitizen)
@@ -225,6 +230,48 @@ type portalCreateBody struct {
 	PostalCode    string         `json:"postalCode,omitempty"`
 	Ward          string         `json:"ward,omitempty"`
 	FormData      domain.JSONMap `json:"formData,omitempty"`
+
+	// FormToken is the single-use token from GET /portal/form-token. Required
+	// for an anonymous submission and ignored for a signed-in one, which has an
+	// account behind it already.
+	FormToken string `json:"formToken,omitempty"`
+
+	// WebsiteURL is a trap and is never read as data. The portal renders it
+	// hidden from sight, from the keyboard and from assistive technology, so no
+	// resident can fill it in and a form-filling script will.
+	//
+	// It must be declared here because the decoder rejects unknown fields —
+	// which is itself most of the defence, since a bot cannot invent a field
+	// name that gets through.
+	WebsiteURL string `json:"websiteUrl,omitempty"`
+}
+
+// handlePortalFormToken hands out the token an anonymous submission must
+// present.
+//
+// Rate limited harder than anything else on the public surface, because this is
+// where the sustained ceiling actually is: every anonymous report needs a fresh
+// token, so however many times a script posts, it can only go as fast as it is
+// given tokens.
+func (s *Server) handlePortalFormToken(w http.ResponseWriter, r *http.Request) {
+	if !s.submitter.allow("form-token|" + clientIP(r)) {
+		w.Header().Set("Retry-After", "60")
+		writeProblem(w, r, http.StatusTooManyRequests, "rate_limited",
+			"Too many requests. Wait a minute and try again.")
+		return
+	}
+
+	token, err := s.forms.issue(time.Now())
+	if err != nil {
+		s.log.ErrorContext(r.Context(), "could not issue a form token", "error", err)
+		writeProblem(w, r, http.StatusServiceUnavailable, "unavailable",
+			"Reporting is unavailable at the moment. Please try again shortly.")
+		return
+	}
+	// No caching anywhere: a token is single-use, and a cached one is a token
+	// that fails for the next person to be handed it.
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusOK, map[string]string{"token": token})
 }
 
 // optionalCitizen resolves a portal session if the caller has one, and reports
@@ -245,6 +292,61 @@ func (s *Server) optionalCitizen(r *http.Request) *domain.Contact {
 		return nil
 	}
 	return contact
+}
+
+// allowAnonymousSubmission runs the abuse checks that only apply when there is
+// no account behind the request. It writes the response and reports false when
+// the submission should not proceed.
+//
+// Three layers, cheapest first:
+//
+//  1. A per-address rate limit, as a backstop rather than the defence. It is
+//     set generously because a municipal office, a library and a block of flats
+//     all share one address — locking out a whole building to stop one script
+//     is a worse failure than the script.
+//  2. The honeypot, which costs nothing and catches the naive case.
+//  3. The single-use, time-bound, signed form token, which is the actual
+//     control and the reason the rate limit can afford to be generous.
+//
+// Every refusal answers the same way. Telling a caller which layer stopped them
+// is telling them what to change.
+func (s *Server) allowAnonymousSubmission(w http.ResponseWriter, r *http.Request, body portalCreateBody) bool {
+	if !s.submitter.allow("submit|" + clientIP(r)) {
+		w.Header().Set("Retry-After", "60")
+		writeProblem(w, r, http.StatusTooManyRequests, "rate_limited",
+			"Too many reports from this connection just now. Wait a minute and try again.")
+		return false
+	}
+
+	if strings.TrimSpace(body.WebsiteURL) != "" {
+		s.log.InfoContext(r.Context(), "anonymous submission rejected: honeypot filled",
+			"ip", clientIP(r))
+		s.refuseAnonymousSubmission(w, r)
+		return false
+	}
+
+	if err := s.forms.verify(strings.TrimSpace(body.FormToken), time.Now()); err != nil {
+		// Logged with the reason, answered without it. An operator needs to
+		// tell a clock-skew problem from a scripted flood; the caller does not.
+		s.log.InfoContext(r.Context(), "anonymous submission rejected: form token",
+			"reason", err.Error(), "ip", clientIP(r))
+		s.refuseAnonymousSubmission(w, r)
+		return false
+	}
+
+	return true
+}
+
+// refuseAnonymousSubmission is the single, uniform refusal.
+//
+// The copy has to do two jobs at once: give a real resident who hit this by
+// accident — a stale tab, a double submission, a browser that dropped the
+// token — something they can act on, without telling a script anything about
+// which check it failed. "Start again" is the honest answer to all of them.
+func (s *Server) refuseAnonymousSubmission(w http.ResponseWriter, r *http.Request) {
+	writeProblem(w, r, http.StatusBadRequest, "submission_refused",
+		"We could not accept that report. Please open the form again and re-enter it — "+
+			"a form left open for a long time has to be started afresh.")
 }
 
 // handlePortalCreate files a report, with or without a session.
@@ -274,6 +376,9 @@ func (s *Server) handlePortalCreate(w http.ResponseWriter, r *http.Request) {
 	if contact := s.optionalCitizen(r); contact != nil {
 		view, err = s.Portal.Create(r.Context(), contact, in)
 	} else {
+		if !s.allowAnonymousSubmission(w, r, body) {
+			return
+		}
 		view, err = s.Portal.CreateAnonymous(r.Context(), in)
 	}
 	if err != nil {
