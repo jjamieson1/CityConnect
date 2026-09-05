@@ -28,6 +28,7 @@ import (
 	"github.com/jjamieson1/CityConnect/internal/config"
 	"github.com/jjamieson1/CityConnect/internal/contacts"
 	"github.com/jjamieson1/CityConnect/internal/domain"
+	"github.com/jjamieson1/CityConnect/internal/mailer"
 	"github.com/jjamieson1/CityConnect/internal/store"
 )
 
@@ -40,9 +41,13 @@ var (
 
 // Service implements the outbox and dispatcher.
 type Service struct {
-	db       *gorm.DB
-	cfg      *config.Config
-	client   *notify.Client
+	db     *gorm.DB
+	cfg    *config.Config
+	client *notify.Client
+	// mail is the fallback transport for requesters C2 cannot reach. Nil on a
+	// deployment with no mailer configured, in which case email-bound messages
+	// wait in the outbox rather than being discarded.
+	mail     mailer.Sender
 	catalog  *catalog.Service
 	contacts *contacts.Service
 	audit    *audit.Service
@@ -58,6 +63,17 @@ func NewService(
 		db: db, cfg: cfg, client: client, catalog: cat, contacts: cont,
 		audit: aud, log: log.With("component", "notifications"),
 	}
+}
+
+// SetMailer wires the direct-email transport after construction, matching how
+// the other optional collaborators are attached.
+func (s *Service) SetMailer(m mailer.Sender) {
+	// A nil interface holding a nil pointer is still non-nil, and would send
+	// every guest's confirmation into a nil dereference.
+	if m == nil {
+		return
+	}
+	s.mail = m
 }
 
 // QueueForRequest renders the template for an event and enqueues it.
@@ -82,12 +98,20 @@ func (s *Service) QueueForRequest(ctx context.Context, event string, req *domain
 		return err
 	}
 
-	sub, err := s.c2SubFor(ctx, contact.ID)
-	if err != nil {
-		// No C2 identity means no channel to reach them through. Recorded as
-		// a suppression so the console can show why nothing was sent, rather
-		// than leaving a silent gap.
-		return s.recordSuppression(ctx, contact, req, event, domain.SuppressNoC2Link)
+	// C2 first, always. A consented citizen gets the in-app inbox, the consent
+	// gate and their own channel preferences, none of which direct email has.
+	// Email is the fallback for somebody C2 cannot reach at all — a guest with
+	// no account, who would otherwise be told nothing.
+	transport, sub, recipient := domain.TransportC2, "", ""
+	if found, err := s.c2SubFor(ctx, contact.ID); err == nil {
+		sub = found
+	} else if addr := strings.TrimSpace(contact.PrimaryEmail); addr != "" {
+		transport, recipient = domain.TransportEmail, addr
+	} else {
+		// Neither a subject identifier nor an address. Recorded as a
+		// suppression so the console shows why nothing was sent, rather than
+		// leaving a silent gap.
+		return s.recordSuppression(ctx, contact, req, event, domain.SuppressNoAddress)
 	}
 
 	allowed, reason, err := s.contacts.MayContact(ctx, contact.ID,
@@ -113,7 +137,9 @@ func (s *Service) QueueForRequest(ctx context.Context, event string, req *domain
 	return s.Enqueue(ctx, EnqueueInput{
 		ContactID:  contact.ID,
 		RequestID:  req.ID,
+		Transport:  transport,
 		C2Sub:      sub,
+		Recipient:  recipient,
 		Event:      event,
 		Subject:    rendered.Subject,
 		Body:       rendered.Body,
@@ -172,9 +198,13 @@ func (s *Service) buildContext(req *domain.Request, contact *domain.Contact, ext
 
 // EnqueueInput describes a message to queue.
 type EnqueueInput struct {
-	ContactID   string
-	RequestID   string
+	ContactID string
+	RequestID string
+	// Transport is domain.TransportC2 or domain.TransportEmail. Empty defaults
+	// to C2, which keeps every existing caller meaning what it meant before.
+	Transport   string
 	C2Sub       string
+	Recipient   string
 	Event       string
 	Subject     string
 	Body        string
@@ -190,18 +220,41 @@ type EnqueueInput struct {
 // a burst of status changes should not produce four near-identical emails to
 // the same citizen within a minute.
 func (s *Service) Enqueue(ctx context.Context, in EnqueueInput) error {
-	if in.C2Sub == "" || strings.TrimSpace(in.Subject) == "" || strings.TrimSpace(in.Body) == "" {
-		return fmt.Errorf("%w: sub, subject and body are required", ErrInvalidInput)
+	if in.Transport == "" {
+		in.Transport = domain.TransportC2
+	}
+	if strings.TrimSpace(in.Subject) == "" || strings.TrimSpace(in.Body) == "" {
+		return fmt.Errorf("%w: subject and body are required", ErrInvalidInput)
+	}
+	// Each transport needs its own kind of address, and a row carrying neither
+	// is a message with nowhere to go.
+	switch in.Transport {
+	case domain.TransportC2:
+		if in.C2Sub == "" {
+			return fmt.Errorf("%w: a C2 subject is required", ErrInvalidInput)
+		}
+	case domain.TransportEmail:
+		if strings.TrimSpace(in.Recipient) == "" {
+			return fmt.Errorf("%w: an email address is required", ErrInvalidInput)
+		}
+	default:
+		return fmt.Errorf("%w: unknown transport %q", ErrInvalidInput, in.Transport)
 	}
 	if in.Category == "" {
 		in.Category = "BUSINESS"
 	}
 
-	fingerprint := hashOf(in.C2Sub, in.RequestID, in.Subject, in.Body)
+	fingerprint := hashOf(in.Transport, in.C2Sub, in.Recipient, in.RequestID, in.Subject, in.Body)
 
+	// The cutoff is deliberately in local time, matching the clock GORM writes
+	// CreatedAt with. Comparing a UTC value against a locally-written column
+	// makes this window silently miss by the UTC offset — on a host six hours
+	// behind, nothing within six hours ever looks like a duplicate and the
+	// collapse quietly stops happening. Both are the same instant; only the
+	// driver's comparison cares which zone it is expressed in.
 	var dupe int64
 	s.db.WithContext(ctx).Model(&domain.NotificationOutbox{}).
-		Where("idempotency_hash = ? AND created_at > ?", fingerprint, time.Now().UTC().Add(-5*time.Minute)).
+		Where("idempotency_hash = ? AND created_at > ?", fingerprint, time.Now().Add(-5*time.Minute)).
 		Count(&dupe)
 	if dupe > 0 {
 		s.log.DebugContext(ctx, "collapsed a duplicate notification", "event", in.Event)
@@ -209,7 +262,8 @@ func (s *Service) Enqueue(ctx context.Context, in EnqueueInput) error {
 	}
 
 	row := &domain.NotificationOutbox{
-		ContactID: in.ContactID, RequestID: in.RequestID, C2Sub: in.C2Sub,
+		ContactID: in.ContactID, RequestID: in.RequestID,
+		Transport: in.Transport, C2Sub: in.C2Sub, Recipient: in.Recipient,
 		Event: in.Event, Subject: in.Subject, Body: in.Body,
 		ShortBody: in.ShortBody, Category: in.Category, TemplateID: in.TemplateID,
 		State: domain.OutboxPending, NextAttemptAt: time.Now().UTC(),
@@ -280,10 +334,7 @@ func (s *Service) Drain(ctx context.Context, batch int) (*DrainResult, error) {
 		row := &rows[i]
 		res.Attempted++
 
-		result := s.client.Send(ctx, notify.Request{
-			Sub: row.C2Sub, Subject: row.Subject, Body: row.Body,
-			ShortBody: row.ShortBody, Category: row.Category,
-		})
+		result := s.send(ctx, row)
 
 		s.applyResult(ctx, row, result, res)
 
@@ -294,6 +345,43 @@ func (s *Service) Drain(ctx context.Context, batch int) (*DrainResult, error) {
 		}
 	}
 	return res, nil
+}
+
+// send dispatches one row over whichever transport it was queued for.
+//
+// Both answer in notify.Result, so the outcome handling below — backoff,
+// suppression, the timeline entry, the contact flag — is written once and
+// applies to both. A second transport must not become a second set of rules
+// about what a failure means.
+func (s *Service) send(ctx context.Context, row *domain.NotificationOutbox) notify.Result {
+	if row.Transport != domain.TransportEmail {
+		return s.client.Send(ctx, notify.Request{
+			Sub: row.C2Sub, Subject: row.Subject, Body: row.Body,
+			ShortBody: row.ShortBody, Category: row.Category,
+		})
+	}
+
+	if s.mail == nil {
+		// Queued for email on a deployment with no mailer. Retry rather than
+		// fail: configuring one should deliver the backlog, not discard it.
+		return notify.Result{Outcome: notify.OutcomeRetry,
+			Err: errors.New("notifications: no mailer configured")}
+	}
+
+	sent := s.mail.Send(ctx, mailer.Message{
+		To: row.Recipient, Subject: row.Subject, Body: row.Body,
+	})
+	switch sent.Outcome {
+	case mailer.OutcomeSent:
+		return notify.Result{Outcome: notify.OutcomeSent, StatusCode: sent.Code}
+	case mailer.OutcomeBounced:
+		// A hard bounce is the email equivalent of C2's 403: permanent, not
+		// retryable, and worth flagging so an agent knows this resident has to
+		// be reached another way.
+		return notify.Result{Outcome: notify.OutcomeNoConsent, StatusCode: sent.Code, Err: sent.Err}
+	default:
+		return notify.Result{Outcome: notify.OutcomeRetry, StatusCode: sent.Code, Err: sent.Err}
+	}
 }
 
 func (s *Service) applyResult(ctx context.Context, row *domain.NotificationOutbox, result notify.Result, res *DrainResult) {
@@ -318,15 +406,22 @@ func (s *Service) applyResult(ctx context.Context, row *domain.NotificationOutbo
 		res.Sent++
 
 		// C2 accepted it, so the citizen is reachable again — clear any stale
-		// unreachable flag from an earlier refusal.
-		if row.ContactID != "" {
+		// unreachable flag from an earlier refusal. A delivered *email* says
+		// nothing about their C2 consent, so it must not clear that flag.
+		if row.ContactID != "" && row.Transport != domain.TransportEmail && s.contacts != nil {
 			_ = s.contacts.SetC2Reachable(ctx, row.ContactID, true, "")
 		}
 		s.recordOnTimeline(ctx, row, result)
 
 	case notify.OutcomeNoConsent, notify.OutcomeUnknown:
 		reason := domain.SuppressNoConsent
-		if result.Outcome == notify.OutcomeUnknown {
+		switch {
+		case row.Transport == domain.TransportEmail:
+			// The same permanent outcome arrives by a different road: the
+			// address bounced. Calling that "no consent" would tell an agent
+			// something untrue about a resident who never had a C2 account.
+			reason = domain.SuppressBounced
+		case result.Outcome == notify.OutcomeUnknown:
 			reason = domain.SuppressUnknownSub
 		}
 		updates["state"] = domain.OutboxSuppressed
@@ -335,7 +430,14 @@ func (s *Service) applyResult(ctx context.Context, row *domain.NotificationOutbo
 
 		// Flag the contact so an agent can see at a glance that this citizen
 		// must be phoned or posted rather than notified.
-		if row.ContactID != "" {
+		//
+		// Only for C2. Contact.C2Reachable is documented as being maintained
+		// from C2's notification responses, and a bounced email says nothing
+		// about whether the resident holds C2 consent — most guests never had
+		// an account to hold it with. Overloading the field would put a wrong
+		// answer in front of an agent. The suppression row is the record for a
+		// bounce, and it carries the reason.
+		if row.ContactID != "" && row.Transport != domain.TransportEmail && s.contacts != nil {
 			_ = s.contacts.SetC2Reachable(ctx, row.ContactID, false, reason)
 		}
 		s.log.InfoContext(ctx, "notification suppressed by C2",

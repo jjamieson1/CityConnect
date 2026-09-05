@@ -35,6 +35,11 @@ type Config struct {
 	AttachmentDir   string
 	AttachmentMaxMB int64
 
+	// Mail is the direct-email fallback for requesters C2 cannot reach. Empty
+	// host means no mailer, and messages bound for email wait in the outbox
+	// rather than being discarded — configuring one later delivers the backlog.
+	Mail MailConfig
+
 	// ScannerAddress is the malware scanner: host:port for clamd over TCP, or a
 	// path for its unix socket. Empty means no scanner, and every upload is
 	// quarantined rather than stored — an unconfigured deployment holds files
@@ -62,6 +67,25 @@ type Config struct {
 	// advance. It is no weaker than the invite flow an administrator would use
 	// from the console, and it still never auto-provisions an unknown identity.
 	BootstrapAdminEmails []string
+}
+
+// MailConfig describes the SMTP relay used for direct email.
+//
+// This is a fallback, not a parallel notification system: a citizen holding
+// active C2 consent is reached through C2, which gives the in-app inbox, the
+// consent gate and their own channel preferences. Email exists for a guest with
+// no account, who would otherwise be told nothing at all.
+type MailConfig struct {
+	Host     string
+	Port     int
+	Username string
+	Password string
+	// From should be a municipality's own address. Mail from a domain the
+	// resident recognises is mail they open rather than report.
+	From     string
+	FromName string
+	StartTLS bool
+	Timeout  time.Duration
 }
 
 // DBConfig describes the MariaDB connection.
@@ -200,10 +224,20 @@ func Load() (*Config, error) {
 		PortalPublicURL: strings.TrimSuffix(env("CC_PORTAL_PUBLIC_URL", ""), "/"),
 		ShutdownTimeout: envDuration("CC_SHUTDOWN_TIMEOUT", 20*time.Second),
 
-		AttachmentDir:        env("CC_ATTACHMENT_DIR", "./data/attachments"),
-		AttachmentMaxMB:      int64(envInt("CC_ATTACHMENT_MAX_MB", 25)),
-		ReferencePrefix:      env("CC_REFERENCE_PREFIX", ""),
-		ScannerAddress:       env("CC_SCANNER_ADDRESS", ""),
+		AttachmentDir:   env("CC_ATTACHMENT_DIR", "./data/attachments"),
+		AttachmentMaxMB: int64(envInt("CC_ATTACHMENT_MAX_MB", 25)),
+		ReferencePrefix: env("CC_REFERENCE_PREFIX", ""),
+		ScannerAddress:  env("CC_SCANNER_ADDRESS", ""),
+		Mail: MailConfig{
+			Host:     env("CC_SMTP_HOST", ""),
+			Port:     envInt("CC_SMTP_PORT", 587),
+			Username: env("CC_SMTP_USERNAME", ""),
+			Password: env("CC_SMTP_PASSWORD", ""),
+			From:     env("CC_SMTP_FROM", ""),
+			FromName: env("CC_SMTP_FROM_NAME", ""),
+			StartTLS: envBool("CC_SMTP_STARTTLS", true),
+			Timeout:  envDuration("CC_SMTP_TIMEOUT", 30*time.Second),
+		},
 		ScannerTimeout:       envDuration("CC_SCANNER_TIMEOUT", 30*time.Second),
 		BootstrapAdminSubs:   envList("CC_BOOTSTRAP_ADMIN_SUBS"),
 		BootstrapAdminEmails: envList("CC_BOOTSTRAP_ADMIN_EMAILS"),
