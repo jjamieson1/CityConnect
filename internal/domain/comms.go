@@ -21,6 +21,26 @@ const (
 	SuppressDoNotContct = "do_not_contact"
 	SuppressOptedOut    = "opted_out"
 	SuppressMaxAttempts = "max_attempts"
+	// SuppressBounced is a hard bounce from a mail server: the address does not
+	// exist or refuses us permanently. Like C2's 403 it is not retryable, and
+	// like C2's 403 it should be visible to an agent — a resident whose email
+	// bounces has to be reached another way.
+	SuppressBounced = "bounced"
+	// SuppressNoAddress means neither a C2 identity nor a usable email address.
+	// There is genuinely nowhere to send.
+	SuppressNoAddress = "no_address"
+)
+
+// Notification transports.
+//
+// Two, and the asymmetry is deliberate. C2 is the path for a consented citizen
+// and gives us the in-app inbox, the consent gate and the citizen's own channel
+// preferences — none of which we want to reimplement. Direct email exists only
+// for requesters C2 cannot reach at all: a guest with no account, who would
+// otherwise be told nothing.
+const (
+	TransportC2    = "c2"
+	TransportEmail = "email"
 )
 
 // NotificationOutbox is one durable citizen notification. Every send goes
@@ -31,7 +51,23 @@ type NotificationOutbox struct {
 	Base
 	ContactID string `gorm:"type:char(36);index;not null" json:"contactId"`
 	RequestID string `gorm:"type:char(36);index" json:"requestId,omitempty"`
-	C2Sub     string `gorm:"size:255;index;not null" json:"c2Sub"`
+
+	// Transport is TransportC2 or TransportEmail. It is chosen when the message
+	// is queued, from what the contact actually has, and never afterwards — a
+	// message that was going to C2 does not quietly become an email.
+	Transport string `gorm:"size:20;not null;default:'c2';index" json:"transport"`
+
+	// C2Sub is set for TransportC2 and empty otherwise. Nullable since the
+	// direct-email path exists precisely for requesters who have no subject
+	// identifier, which was the reason a guest could previously be told
+	// nothing at all.
+	C2Sub string `gorm:"size:255;index" json:"c2Sub,omitempty"`
+
+	// Recipient is the email address for TransportEmail, empty otherwise. Held
+	// on the row rather than read from the contact at send time so the message
+	// goes where it was addressed when it was written, even if the contact is
+	// edited in between.
+	Recipient string `gorm:"size:320;index" json:"recipient,omitempty"`
 
 	Event      string `gorm:"size:80;index" json:"event,omitempty"`
 	Subject    string `gorm:"size:250;not null" json:"subject"`
@@ -114,12 +150,12 @@ type ReportRollup struct {
 	ServiceTypeID string    `gorm:"type:char(36);uniqueIndex:idx_rollup_unique" json:"serviceTypeId,omitempty"`
 	Dimension     string    `gorm:"size:80;uniqueIndex:idx_rollup_unique" json:"dimension,omitempty"`
 
-	Count   int64   `gorm:"not null;default:0" json:"count"`
-	SumVal  float64 `gorm:"not null;default:0" json:"sum"`
-	AvgVal  float64 `gorm:"not null;default:0" json:"avg"`
-	MinVal  float64 `gorm:"not null;default:0" json:"min"`
-	MaxVal  float64 `gorm:"not null;default:0" json:"max"`
-	P90Val  float64 `gorm:"not null;default:0" json:"p90"`
+	Count  int64   `gorm:"not null;default:0" json:"count"`
+	SumVal float64 `gorm:"not null;default:0" json:"sum"`
+	AvgVal float64 `gorm:"not null;default:0" json:"avg"`
+	MinVal float64 `gorm:"not null;default:0" json:"min"`
+	MaxVal float64 `gorm:"not null;default:0" json:"max"`
+	P90Val float64 `gorm:"not null;default:0" json:"p90"`
 }
 
 // Rollup metric names.

@@ -24,6 +24,7 @@ import (
 	"github.com/jjamieson1/CityConnect/internal/httpapi"
 	"github.com/jjamieson1/CityConnect/internal/interactions"
 	"github.com/jjamieson1/CityConnect/internal/jobs"
+	"github.com/jjamieson1/CityConnect/internal/mailer"
 	"github.com/jjamieson1/CityConnect/internal/notifications"
 	"github.com/jjamieson1/CityConnect/internal/portal"
 	"github.com/jjamieson1/CityConnect/internal/reports"
@@ -112,6 +113,25 @@ func run() error {
 		requestSvc.SetNotifier(notificationSvc)
 		log.Info("citizen notifications enabled",
 			"auth", authMode(notifyClient), "endpoint", cfg.C2.PartnerNotificationsURL())
+
+		// The direct-email fallback, for requesters C2 cannot reach. Without it
+		// a guest is told nothing at all — not a confirmation, not a
+		// resolution — so its absence is worth saying out loud.
+		if smtp := mailer.New(mailer.SMTP{
+			Host: cfg.Mail.Host, Port: cfg.Mail.Port,
+			Username: cfg.Mail.Username, Password: cfg.Mail.Password,
+			From: cfg.Mail.From, FromName: cfg.Mail.FromName,
+			StartTLS: cfg.Mail.StartTLS, Timeout: cfg.Mail.Timeout,
+		}); smtp != nil {
+			notificationSvc.SetMailer(smtp)
+			// Host and sender only. The password is configuration a log has no
+			// business repeating.
+			log.Info("direct email enabled for requesters without a C2 account",
+				"host", cfg.Mail.Host, "from", cfg.Mail.From)
+		} else {
+			log.Warn("no mailer configured; requesters without a C2 account cannot be told anything",
+				"set", "CC_SMTP_HOST")
+		}
 	}
 	requestSvc.SetWebhooks(webhookSvc)
 
