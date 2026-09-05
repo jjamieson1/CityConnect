@@ -479,6 +479,16 @@ func (s *Server) handleDownload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Only a cleared file leaves the server. A quarantined one is on disk but
+	// has not been vouched for, and serving it because the row exists is how a
+	// quarantine turns into decoration. This is a 409 rather than a 404: the
+	// attachment is real, the caller may see it, it simply is not ready.
+	if !att.Servable() {
+		writeProblem(w, r, http.StatusConflict, "attachment_not_available",
+			"That file has not cleared a malware scan yet and cannot be downloaded.")
+		return
+	}
+
 	// Force a download rather than inline rendering: a stored SVG or HTML file
 	// served inline from this origin would execute against the session.
 	w.Header().Set("Content-Type", "application/octet-stream")

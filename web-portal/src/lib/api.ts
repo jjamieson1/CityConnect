@@ -105,6 +105,31 @@ export const portalApi = {
   // that a plausible amount of time passed in between.
   formToken: () => call<{ token: string }>("/form-token"),
 
+  // Photos follow the report rather than riding with it: the file may be
+  // several megabytes over a phone connection, and a resident should not lose
+  // a filled-in form because an upload timed out. The grant comes from the
+  // create response and authorises uploads to that one report.
+  attach: async (reference: string, grant: string, file: File) => {
+    const body = new FormData();
+    body.append("file", file);
+
+    const res = await fetch(
+      `${BASE}/requests/${encodeURIComponent(reference)}/attachments`,
+      {
+        method: "POST",
+        credentials: "same-origin",
+        headers: grant ? { "X-Upload-Grant": grant } : undefined,
+        body,
+      },
+    );
+    if (!res.ok) {
+      const problem = (await res.json().catch(() => ({}))) as { detail?: string; code?: string };
+      throw new ApiError(res.status, problem.code ?? "unknown",
+        problem.detail || "That file could not be attached.");
+    }
+    return (await res.json()) as { filename: string; scanned: boolean };
+  },
+
   // idempotencyKey makes a double-click harmless: the second POST replays the
   // first result instead of filing a second work order for the same pothole.
   report: (body: Record<string, unknown>, idempotencyKey?: string) =>

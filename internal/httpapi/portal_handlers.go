@@ -58,6 +58,11 @@ func (s *Server) mountPortal(r chi.Router) {
 		// form opens, spent when it is sent.
 		p.Get("/form-token", s.handlePortalFormToken)
 
+		// Photos follow the report. Public for the same reason reporting is:
+		// an anonymous reporter has no session, and presents the short-lived
+		// grant issued when they filed instead.
+		p.Post("/requests/{reference}/attachments", s.handlePortalUpload)
+
 		p.Group(func(auth chi.Router) {
 			auth.Use(s.requireCitizen)
 
@@ -385,7 +390,23 @@ func (s *Server) handlePortalCreate(w http.ResponseWriter, r *http.Request) {
 		failPortal(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusCreated, view)
+
+	// The upload grant rides on the create response and nowhere else. It must
+	// never appear on a read — a tracking lookup returns the same projection,
+	// and handing an upload credential to anyone who can quote a reference
+	// would undo the point of having one.
+	filed, err := s.Requests.GetByReference(r.Context(), view.Reference)
+	if err != nil {
+		fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, struct {
+		*portal.MyRequest
+		UploadGrant string `json:"uploadGrant"`
+	}{
+		MyRequest:   view,
+		UploadGrant: s.forms.issueUpload(filed.ID, time.Now()),
+	})
 }
 
 type portalCommentBody struct {

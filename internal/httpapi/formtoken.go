@@ -150,6 +150,49 @@ func (f *formTokens) spend(nonce string, now time.Time) error {
 	return nil
 }
 
+// uploadGrantMaxAge is how long after filing a report the photos may follow.
+// Long enough for a slow upload on a phone at the roadside, short enough that
+// a grant left in a log is worthless by the time anyone reads it.
+const uploadGrantMaxAge = 20 * time.Minute
+
+// issueUpload returns a grant authorising uploads to one request.
+//
+// Anonymous reporting creates a problem this solves: the resident has just
+// filed a report and wants to attach a photo, but has no session and never
+// will. A grant bound to that one request id, valid for minutes, lets them
+// finish what they started without inventing an account or leaving the request
+// open to anyone who guesses its reference.
+//
+// Not single-use, unlike a form token: a report can carry several photos, and
+// making each one re-authorise would mean failing the second upload of three.
+// The binding to a request id is what contains it.
+func (f *formTokens) issueUpload(requestID string, now time.Time) string {
+	body := "upload." + requestID + "." + strconv.FormatInt(now.Unix(), 10)
+	return strconv.FormatInt(now.Unix(), 10) + "." + f.sign(body)
+}
+
+// verifyUpload checks a grant against the request it must be for.
+func (f *formTokens) verifyUpload(token, requestID string, now time.Time) error {
+	issued, sig, ok := strings.Cut(token, ".")
+	if !ok {
+		return errFormTokenMalformed
+	}
+	issuedAt, err := strconv.ParseInt(issued, 10, 64)
+	if err != nil {
+		return errFormTokenMalformed
+	}
+
+	// The request id is inside the signed body, so a grant for one report
+	// cannot be replayed against another.
+	if !hmac.Equal([]byte(sig), []byte(f.sign("upload."+requestID+"."+issued))) {
+		return errFormTokenBadSig
+	}
+	if age := now.Sub(time.Unix(issuedAt, 0)); age > uploadGrantMaxAge || age < 0 {
+		return errFormTokenExpired
+	}
+	return nil
+}
+
 func (f *formTokens) sign(body string) string {
 	mac := hmac.New(sha256.New, f.secret)
 	mac.Write([]byte(body))
