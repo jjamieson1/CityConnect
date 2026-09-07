@@ -11,6 +11,7 @@ import (
 
 	"github.com/jjamieson1/CityConnect/internal/audit"
 	"github.com/jjamieson1/CityConnect/internal/catalog"
+	"github.com/jjamieson1/CityConnect/internal/contacts"
 	"github.com/jjamieson1/CityConnect/internal/domain"
 	"github.com/jjamieson1/CityConnect/internal/requests"
 	"github.com/jjamieson1/CityConnect/internal/store"
@@ -174,8 +175,8 @@ func (s *Service) project(r *domain.Request) MyRequest {
 	view := MyRequest{
 		Reference: r.Reference, Subject: r.Subject, Description: r.Description,
 		Status: string(r.Status), StatusLabel: catalog.StatusLabel(r.Status),
-		Open:      r.Status.Open(),
-		OpenedAt:  r.OpenedAt, UpdatedAt: r.LastActivityA,
+		Open:     r.Status.Open(),
+		OpenedAt: r.OpenedAt, UpdatedAt: r.LastActivityA,
 		ResolvedAt: r.ResolvedAt, Resolution: r.ResolutionNote,
 		CSATScore: r.CSATScore,
 	}
@@ -324,6 +325,54 @@ func (s *Service) CreateAnonymous(ctx context.Context, in CreateInput) (*MyReque
 	req, err := s.requests.Create(ctx, audit.SystemActor("", "anonymous report", ""), requests.CreateInput{
 		Channel: domain.ChannelAnonymous, ServiceTypeID: st.ID,
 		Subject: in.Subject, Description: in.Description,
+		Address1: in.Address1, City: in.City, PostalCode: in.PostalCode, Ward: in.Ward,
+		FormData: in.FormData,
+		Source:   domain.SourceC2Card,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	view := s.project(req)
+	return &view, nil
+}
+
+// GuestDetails is what a guest tells us about themselves.
+type GuestDetails struct {
+	Name  string
+	Email string
+	Phone string
+}
+
+// CreateGuest files a request for somebody who gave contact details but has no
+// account.
+//
+// The middle path, and the one most residents will actually take. Unlike an
+// anonymous report there is somebody to write back to, so this gets the full
+// deal: a confirmation, updates as the work progresses, and the ability to come
+// back and check on it later using the reference and the address they gave.
+//
+// That last part is why no separate verification secret is stored. The contact
+// detail they typed *is* what a later tracking attempt is checked against, so
+// there is one value to keep right rather than two that can drift apart.
+func (s *Service) CreateGuest(ctx context.Context, guest GuestDetails, in CreateInput) (*MyRequest, error) {
+	st, err := s.reportableService(ctx, in.ServiceTypeID)
+	if err != nil {
+		return nil, err
+	}
+
+	contact, err := s.contacts.EnsureGuest(ctx,
+		audit.SystemActor("", "guest report", ""), contacts.GuestDetails{
+			Name: guest.Name, Email: guest.Email, Phone: guest.Phone,
+		})
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := s.requests.Create(ctx, audit.SystemActor("", "guest report", ""), requests.CreateInput{
+		ContactID: contact.ID, Channel: domain.ChannelGuest,
+		ServiceTypeID: st.ID,
+		Subject:       in.Subject, Description: in.Description,
 		Address1: in.Address1, City: in.City, PostalCode: in.PostalCode, Ward: in.Ward,
 		FormData: in.FormData,
 		Source:   domain.SourceC2Card,
