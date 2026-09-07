@@ -85,7 +85,13 @@ export const portalApi = {
   logout: () => call<{ status: string; endSessionUrl?: string }>("/auth/logout", { method: "POST" }),
   me: () => call<PortalProfile>("/me"),
 
-  catalog: () => call<Listing<CatalogEntry>>("/catalog"),
+  // Searching happens on the server, not by filtering an already-downloaded
+  // list. The ranking tolerates a misspelling and weighs synonyms, and none of
+  // that can be done client-side against the projection the API returns.
+  catalog: (query?: string) =>
+    call<Listing<CatalogEntry>>(
+      query && query.trim() ? `/catalog?q=${encodeURIComponent(query.trim())}` : "/catalog",
+    ),
   myRequests: (openOnly = false) =>
     call<Listing<MyRequest>>(`/requests${openOnly ? "?openOnly=true" : ""}`),
   request: (reference: string) => call<MyRequest>(`/requests/${encodeURIComponent(reference)}`),
