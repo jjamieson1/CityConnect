@@ -2,14 +2,52 @@ package domain
 
 import "time"
 
+// ServiceCategory groups the catalogue for browsing.
+//
+// A tree rather than the flat string it replaces, because a resident scans for
+// the area of life their problem belongs to before they look for the service:
+// "Roads & transport" first, then "Potholes & road damage". Two levels is what
+// Burnaby asks for and what a municipal catalogue actually needs; the model
+// allows deeper, and the guards below stop it becoming a cycle.
+type ServiceCategory struct {
+	Base
+	Name string `gorm:"size:120;not null;index" json:"name"`
+
+	// ParentID is empty for a top-level category.
+	ParentID string `gorm:"type:char(36);index" json:"parentId,omitempty"`
+
+	// DisplayOrder is the order staff chose, which is rarely alphabetical —
+	// the services a city fields most often belong at the top.
+	DisplayOrder int  `gorm:"not null;default:0" json:"displayOrder"`
+	Active       bool `gorm:"not null;default:true" json:"active"`
+
+	Parent   *ServiceCategory  `gorm:"foreignKey:ParentID" json:"-"`
+	Children []ServiceCategory `gorm:"-" json:"children,omitempty"`
+}
+
 // ServiceType is an entry in the service catalogue: the kind of thing a
 // citizen can ask the city for. It carries the intake form schema, the routing
 // default, the SLA policy, and the binding to a C2 Service Card.
 type ServiceType struct {
 	Base
-	Code        string `gorm:"size:60;uniqueIndex;not null" json:"code"`
-	Name        string `gorm:"size:200;not null" json:"name"`
-	Category    string `gorm:"size:80;index" json:"category,omitempty"`
+	Code string `gorm:"size:60;uniqueIndex;not null" json:"code"`
+	Name string `gorm:"size:200;not null" json:"name"`
+
+	// CategoryID points into the category tree. Empty means uncategorised,
+	// which is allowed: a service that has not been filed yet should still be
+	// reportable rather than invisible.
+	CategoryID string `gorm:"type:char(36);index" json:"categoryId,omitempty"`
+
+	// Category is the category's name, denormalised onto the service.
+	//
+	// Deliberately kept rather than derived. Routing rules match on the
+	// category *name* — it is what a business user writes in a rule — and
+	// search weights it, and both frontends read it as a string. Holding the
+	// name here keeps all three working without a join on every read, at the
+	// cost of one UPDATE when a category is renamed. catalog.SaveCategory does
+	// that update; nothing else may write this field.
+	Category string `gorm:"size:120;index" json:"category,omitempty"`
+
 	Description string `gorm:"type:text" json:"description,omitempty"`
 
 	// Synonyms are the words residents actually use, which are rarely the
@@ -196,15 +234,15 @@ type Macro struct {
 // these a queue console is unusable past a few hundred open items.
 type SavedView struct {
 	Base
-	Name       string  `gorm:"size:160;not null" json:"name"`
-	Entity     string  `gorm:"size:30;not null;index" json:"entity"` // request | contact
-	OwnerID    string  `gorm:"type:char(36);index" json:"ownerId,omitempty"`
-	Shared     bool    `gorm:"not null;default:false" json:"shared"`
-	Filters    JSONMap `gorm:"type:text" json:"filters"`
+	Name       string     `gorm:"size:160;not null" json:"name"`
+	Entity     string     `gorm:"size:30;not null;index" json:"entity"` // request | contact
+	OwnerID    string     `gorm:"type:char(36);index" json:"ownerId,omitempty"`
+	Shared     bool       `gorm:"not null;default:false" json:"shared"`
+	Filters    JSONMap    `gorm:"type:text" json:"filters"`
 	Columns    StringList `gorm:"type:text" json:"columns"`
-	SortBy     string  `gorm:"size:60" json:"sortBy,omitempty"`
-	SortDir    string  `gorm:"size:8" json:"sortDir,omitempty"`
-	IsDefault  bool    `gorm:"not null;default:false" json:"isDefault"`
+	SortBy     string     `gorm:"size:60" json:"sortBy,omitempty"`
+	SortDir    string     `gorm:"size:8" json:"sortDir,omitempty"`
+	IsDefault  bool       `gorm:"not null;default:false" json:"isDefault"`
 	LastUsedAt *time.Time `json:"lastUsedAt,omitempty"`
 }
 
@@ -212,11 +250,11 @@ type SavedView struct {
 // is kept, and whether it is then anonymised or destroyed.
 type RetentionPolicy struct {
 	Base
-	Entity        string `gorm:"size:60;uniqueIndex;not null" json:"entity"`
-	RetainMonths  int    `gorm:"not null" json:"retainMonths"`
-	Action        string `gorm:"size:20;not null;default:'anonymize'" json:"action"` // anonymize | purge
-	Enabled       bool   `gorm:"not null;default:false" json:"enabled"`
-	Description   string `gorm:"size:400" json:"description,omitempty"`
-	LastRunAt     *time.Time `json:"lastRunAt,omitempty"`
-	LastAffected  int        `gorm:"not null;default:0" json:"lastAffected"`
+	Entity       string     `gorm:"size:60;uniqueIndex;not null" json:"entity"`
+	RetainMonths int        `gorm:"not null" json:"retainMonths"`
+	Action       string     `gorm:"size:20;not null;default:'anonymize'" json:"action"` // anonymize | purge
+	Enabled      bool       `gorm:"not null;default:false" json:"enabled"`
+	Description  string     `gorm:"size:400" json:"description,omitempty"`
+	LastRunAt    *time.Time `json:"lastRunAt,omitempty"`
+	LastAffected int        `gorm:"not null;default:0" json:"lastAffected"`
 }
