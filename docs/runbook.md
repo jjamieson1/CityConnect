@@ -93,6 +93,42 @@ sudo -u cityconnect /opt/cityconnect/bin/ccadm grant-role \
 The subject identifier is opaque and comes from C2 — it is not an email address.
 Ask the C2 administrator, or read it from `sub` in your own id_token.
 
+### Settings that fail quietly if you skip them
+
+Every one of these has a working default, and every one of those defaults is
+safe rather than correct. **None of them errors at boot.** Each fails in a way
+nobody notices for days, so check the four together before a public launch
+rather than discovering them one at a time.
+
+| Setting | Left unset | What a resident experiences |
+|---|---|---|
+| `CC_SCANNER_ADDRESS` | Every upload is quarantined and never served | They are told the photo arrived. Nobody ever sees it. |
+| `CC_FORM_TOKEN_SECRET` | Each instance signs with its own boot-time key | Fine on one instance. On several, **reports are refused at random** — one in N submissions, looking exactly like a flaky form |
+| `CC_SMTP_HOST` | Email-bound messages wait in the outbox forever | A guest is never told their report was received, and never told why |
+| `CC_REFERENCE_PREFIX` | References read `SR-…` | Nothing breaks. But a Burnaby demo quoting `SR-` instead of `BBY-` looks like somebody else's software |
+
+```sh
+# All four, from the running configuration.
+sudo -u cityconnect grep -E \
+  'CC_(SCANNER_ADDRESS|FORM_TOKEN_SECRET|SMTP_HOST|REFERENCE_PREFIX)=' \
+  /opt/cityconnect/cityconnect.env
+```
+
+The boot log is the faster check for the first three — the service warns on each
+of them at start-up, so after a restart:
+
+```sh
+journalctl -u cityconnect-api --since '5 min ago' | grep -i warn
+```
+
+`CC_REFERENCE_PREFIX` deliberately does not warn: its default works, it is only
+a matter of whose software the references look like.
+
+**Get `CC_FORM_TOKEN_SECRET` right first.** It is the only one of the four whose
+failure is *intermittent* — behind a load balancer a report is refused roughly
+(N−1)/N of the time — and intermittent failures are the ones that get blamed on
+the network for a fortnight before anyone reads a config file.
+
 ### Verify before handing over
 
 ```sh

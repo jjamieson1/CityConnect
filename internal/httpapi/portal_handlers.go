@@ -236,6 +236,13 @@ type portalCreateBody struct {
 	Ward          string         `json:"ward,omitempty"`
 	FormData      domain.JSONMap `json:"formData,omitempty"`
 
+	// Contact details, when the reporter chose to give them. Present means the
+	// guest path — a confirmation, updates, and the ability to track it later.
+	// Absent means anonymous, which is deliberately a weaker deal.
+	ContactName  string `json:"contactName,omitempty"`
+	ContactEmail string `json:"contactEmail,omitempty"`
+	ContactPhone string `json:"contactPhone,omitempty"`
+
 	// FormToken is the single-use token from GET /portal/form-token. Required
 	// for an anonymous submission and ignored for a signed-in one, which has an
 	// account behind it already.
@@ -375,16 +382,26 @@ func (s *Server) handlePortalCreate(w http.ResponseWriter, r *http.Request) {
 		view *portal.MyRequest
 		err  error
 	)
-	// The session decides the channel, never the request body. A client that
-	// could ask to be treated as signed-in would be choosing whose name goes on
-	// the report.
+	// The session decides whether this is an authenticated report, and the body
+	// never does — a client that could ask to be treated as signed-in would be
+	// choosing whose name goes on the report.
+	//
+	// Below that, the body chooses only between giving contact details and not,
+	// which is a choice the reporter is entitled to make. Both unauthenticated
+	// paths pass the same abuse checks.
 	if contact := s.optionalCitizen(r); contact != nil {
 		view, err = s.Portal.Create(r.Context(), contact, in)
 	} else {
 		if !s.allowAnonymousSubmission(w, r, body) {
 			return
 		}
-		view, err = s.Portal.CreateAnonymous(r.Context(), in)
+		if email := strings.TrimSpace(body.ContactEmail); email != "" {
+			view, err = s.Portal.CreateGuest(r.Context(), portal.GuestDetails{
+				Name: body.ContactName, Email: email, Phone: body.ContactPhone,
+			}, in)
+		} else {
+			view, err = s.Portal.CreateAnonymous(r.Context(), in)
+		}
 	}
 	if err != nil {
 		failPortal(w, r, err)

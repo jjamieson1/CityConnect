@@ -90,6 +90,17 @@ func New(d Deps) *Server {
 		forms:     newFormTokens(d.Config.Sec.FormTokenSecret, d.Config.Sec.FormTokenMinAge),
 		started:   time.Now(),
 	}
+	// The one setting whose absence fails intermittently rather than visibly.
+	// Each instance generates its own key, so a token issued by one does not
+	// verify at another and a resident's report is refused roughly (N-1)/N of
+	// the time behind a load balancer — which reads as a flaky form, not a
+	// configuration error, and gets blamed on the network for a fortnight.
+	if d.Config.Sec.FormTokenSecret == "" {
+		d.Log.Warn("no form-token secret configured; a generated one is fine on a single "+
+			"instance but will refuse reports at random across several",
+			"set", "CC_FORM_TOKEN_SECRET")
+	}
+
 	s.routes()
 	return s
 }

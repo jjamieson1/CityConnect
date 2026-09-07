@@ -9,11 +9,19 @@ could be shown it working, not that a foundation exists.
 
 | Rating | Count | Meaning |
 |---|---|---|
-| **Have** | 12 | Working today, demonstrable |
-| **Partial** | 27 | Foundation exists, visible work needed |
-| **Missing** | 28 | Nothing in the codebase |
+| **Have** | 17 | Working today, demonstrable |
+| **Partial** | 25 | Foundation exists, visible work needed |
+| **Missing** | 25 | Nothing in the codebase |
 
-*Updated 2026-09-02: G·1-035 moved Missing → Have (CIT-13).*
+**Re-rated 2026-09-07**, after Sprint 1. Six requirements moved, and the movement is concentrated in
+exactly the area this analysis called the weakness — the public front door. What was "a resident
+cannot report a pothole without a C2 account" is now three working submission paths, a scanned photo
+upload, and a tracking loop that the people it was built for can actually reach.
+
+Still true, and still the thing an evaluator will find first: **there is no catalogue search**
+(G·1-012). A resident who cannot find the service never reaches any of the above.
+
+Moved: G·1-016, G·1-025, G·1-033, G·1-035, G·1-036, G·1-048 → **Have**; G·1-021 → **Partial**.
 
 The shape of that result is the strategy: CityConnect is strong exactly where a CRM is hard
 (workload, SLA, audit, routing, notification durability) and absent exactly where a *public intake
@@ -52,16 +60,16 @@ portal* is judged (anonymous front door, discovery, location, governance). See
 
 | Req | Rating | Evidence / gap |
 |---|---|---|
-| G·1-016 Anonymous + guest, hardened against abuse | **Missing** | `mountPortal` puts `POST /portal/requests` inside `requireCitizen`. No anonymous path, no guest path, and no CAPTCHA/honeypot/proof-of-work anywhere in the tree. **The single largest gap.** |
+| G·1-016 Anonymous + guest, hardened against abuse | **Have** *(CIT-11, CIT-12, CIT-14)* | Both paths ship. Anonymous files with no contact and is explicitly not trackable; guest gives an email and gets a confirmation and tracking. Hardened by a single-use signed form token, a honeypot hidden from sight, keyboard and assistive technology alike, per-endpoint rate limits and idempotent submit. The bot control is shaped by WCAG 2.2 SC 3.3.8 — no puzzle CAPTCHA. |
 | G·1-017 Authenticated path: registration, recovery, profile, history, prefs | **Partial → integrate C2** | OIDC+PKCE login, `/portal/me`, and request history all work (`internal/portal`, `internal/c2/oidc`). Self-registration and credential recovery are **C2's job, not ours** (`builder/authentication-profile.md`). Address management and preferences are absent. |
 | G·1-018 Configurable forms per service | **Have** | `ServiceType.IntakeForm` → `domain.FormField` (key, label, type, required, options, help, pattern, min, max), rendered by `PortalField` and validated server-side via `catalog.ParseForm`. |
 | G·1-019 Scoped launch set, engine scalable | **Have** | Adding a service adds no code. |
 | G·1-020 Form opens without losing page context | **Partial** | `Report` is a route, not a dialog. No focus trap, no keyboard dismissal, no return-focus. |
-| G·1-021 Configurable contact fields + PI collection notice | **Missing** | No personal-information collection notice anywhere in the intake flow. **This is a PIPEDA obligation, not just a Burnaby requirement.** |
+| G·1-021 Configurable contact fields + PI collection notice | **Partial** *(CIT-12)* | The guest form collects name, email and phone and carries a collection notice at the point of collection. The notice wording is hardcoded and the fields are not yet configurable per service — CIT-15 makes both configurable. |
 | G·1-022 Client+server validation, accessible field errors | **Partial** | Server-side validation is real. Client-side errors exist but field-level `aria-describedby`/`aria-invalid` association is unverified. |
 | G·1-023 Conditional fields/sections | **Missing** | `FormField` has no `conditionalOn` / show-when rule. |
 | G·1-024 Max length + profanity filtering | **Partial** | `pattern`, `min`, `max` supported. No profanity filter. |
-| G·1-025 Attachments incl. camera capture, mandatory malware scan | **Partial** | `internal/requests/attachments.go` has an `AttachmentStore` with type allow-list, size cap, checksum and a `ScanFunc` seam — **but the default scanner returns `"skipped"`, no scanner is wired in `cmd/server`, and the citizen portal cannot attach at all.** Honest seam, unmet requirement. |
+| G·1-025 Attachments incl. camera capture, mandatory malware scan | **Have** *(CIT-26)* | Scanning happens **before** storage: uploads land in quarantine, stream to clamd, and are promoted into the served tree only on a clean verdict. Infected files are deleted; unscanned ones stay quarantined and are never served, while the request is still accepted. Portal upload with `capture="environment"` so a phone opens the camera. Nothing can record `"skipped"` any more. |
 | G·1-026 Cancel/exit without unintended submission | **Partial** | Navigable away; no explicit confirm-discard. |
 
 ## 2.4 Location Services
@@ -79,18 +87,18 @@ portal* is judged (anonymous front door, discovery, location, governance). See
 
 | Req | Rating | Evidence / gap |
 |---|---|---|
-| G·1-033 Gated submission, no duplicate submits, data preserved | **Partial** | `internal/httpapi/idempotency.go` + `domain.IdempotencyKey` give real server-side duplicate-submit protection. Client-side data preservation on failure unverified. |
+| G·1-033 Gated submission, no duplicate submits, data preserved | **Have** *(CIT-14)* | Server-side validation gates submission; the portal sends an `Idempotency-Key` stable for the life of one form, so a double click replays the first result rather than dispatching a second crew. A failed submission leaves the form filled in. |
 | G·1-034 Configurable confirmation with case number, next steps, expected response | **Partial** | Reference number is returned and SLA targets are computable (`catalog.ComputeTargets`). The confirmation copy itself is not configurable. |
 | G·1-035 Unique **non-sequential** reference number | **Have** *(CIT-13)* | `requests.NewReference` draws 8 symbols of Crockford base32 from `crypto/rand` — `BBY-7K4M-2QX9` — with the prefix configurable per deployment (`CC_REFERENCE_PREFIX`) and a redraw on the unique-index collision. Lookup folds O/I/L so a reference survives being read down a phone. `ccadm reissue-references` converts historical rows. |
 | G·1-037 Structured, queryable submission data | **Have** | `Request.FormData` JSON + full reporting layer over it. |
-| G·1-036 Template-driven confirmation (email, optional SMS) | **Have (authenticated) / Missing (guest)** | `internal/notifications` is a durable outbox with templates, retry/backoff, suppression and an admin retry/replay UI — but `NotificationOutbox.C2Sub` is `not null`: **every message goes through C2 and requires an active consented citizen.** A guest requester cannot be told anything. |
+| G·1-036 Template-driven confirmation (email, optional SMS) | **Have** *(CIT-21)* | One durable outbox, two transports. C2 for a consented citizen — in-app inbox, consent gate, their own channel preferences — and direct SMTP for a requester C2 cannot reach. Both share the same retry, backoff, duplicate collapsing and operator view. A hard bounce suppresses as `bounced` rather than being retried. SMS remains C2's, and C2's SMS carries no content by design. |
 | G·1-065 Notification preferences by channel and message type | **Partial — C2 owns this** | `domain.ConsentPreference` (contact × purpose × channel) exists locally but is not wired to sending. Per `builder/notifications.md`, **C2 owns channel opt-in and the consent gate**; C2 does *not* model per-message-type preference. Genuine delta to disclose. |
 
 ## 2.6 Tracking & Support
 
 | Req | Rating | Evidence / gap |
 |---|---|---|
-| G·1-048 Track by reference + second factor, rate-limited, anti-enumeration | **Missing** | No public tracking endpoint. `requests.GetByReference` exists but is only reachable behind staff auth. The global per-IP limiter (`middleware.go`, 600/min) is not a per-endpoint tracking control. |
+| G·1-048 Track by reference + second factor, rate-limited, anti-enumeration | **Have** *(CIT-20, CIT-12)* | `POST /api/portal/requests/track` — a POST so the verification value never reaches a URL, browser history or an access log. Constant-time comparison over fixed-length digests. Every failure is byte-identical, so it cannot be used to discover which references exist. Two rate-limit buckets, per address and per reference, both keyed on the *normalised* reference so the O/0 fold cannot multiply attempts. Reachable in practice since CIT-12 gave guests a contact detail to verify against. |
 | G·1-049 Status from the system of record only | **Have (today)** | `portal.MyRequest` projects status/updates from the single source of truth. The rating inverts once a CRM adapter makes the back office the SoR. |
 | G·1-050 Configurable "reference not found" help | **Missing** | — |
 | G·1-051 Configurable contact channels | **Missing** | — |
@@ -148,12 +156,15 @@ portal* is judged (anonymous front door, discovery, location, governance). See
 
 ## Cross-cutting findings
 
-1. **The front door is the gap.** Everything a Burnaby evaluator clicks first — anonymous submission,
-   catalogue search, map pin, tracking a reference — is missing. Everything behind it is strong.
+1. ~~**The front door is the gap.**~~ Half closed. Anonymous and guest submission, scanned photo
+   upload and reference tracking all work (Sprint 1). **Catalogue search and the map pin do not** —
+   and search is the first thing an evaluator touches, so it is now the single most visible hole.
 2. ~~**Sequential reference numbers are a live defect**~~ — **fixed** (CIT-13). References are now
    drawn at random, and `ccadm reissue-references` converts what was already in the table.
-3. **No CI exists.** `builder/security-service-scanning.md` and the WCAG axe-in-CI commitment both
-   assume a pipeline. This also affects what evidence we can put in the proposal.
+3. ~~**No CI exists.**~~ Fixed (CIT-41). Build, test, lint, axe against WCAG 2.2 AA and the full
+   security scan run on every commit, and `health.json` is a CI artefact rather than something
+   produced by hand — so the evidence in the proposal is a copy of what CI observed. The scan also
+   now covers `web-portal`, which it did not: the citizen-facing app was going unscanned.
 4. **C2 covers more than expected on identity and messaging, and less than expected on preferences.**
    Registration, credential recovery, consent and channel fan-out are C2's. Per-message-type
    preference (G·1-065) is not something C2 models, and no C2 path exists for a guest with no `sub`.

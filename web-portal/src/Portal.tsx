@@ -312,6 +312,7 @@ function Report({ signedIn }: { signedIn: boolean }) {
   // defeat the point.
   const [submissionKey] = useState(() => crypto.randomUUID());
 
+  const [contact, setContact] = useState({ name: "", email: "", phone: "" });
   const [photos, setPhotos] = useState<File[]>([]);
   const [photoError, setPhotoError] = useState("");
 
@@ -325,6 +326,11 @@ function Report({ signedIn }: { signedIn: boolean }) {
         formData: extra,
         formToken: formToken.data?.token,
         websiteUrl,
+        // Empty means anonymous. The server decides on the same rule, so the
+        // two cannot disagree about which deal the resident chose.
+        contactName: contact.name,
+        contactEmail: contact.email,
+        contactPhone: contact.phone,
       }, submissionKey),
     onSuccess: async (created) => {
       // Photos go up after the report exists. If one fails, the report still
@@ -514,21 +520,67 @@ function Report({ signedIn }: { signedIn: boolean }) {
         )}
 
         {!signedIn && (
-          <div
-            className="rounded-md px-4 py-3 text-sm"
-            style={{ background: "var(--surface-0)" }}
-          >
-            <p className="font-medium">You are reporting without an account</p>
-            <p className="mt-1 text-ink-muted">
-              We will still act on it, and you will get a reference number. But with no way to
-              reach you we cannot confirm it, send updates, or let you check on it later — not
-              even with the reference.{" "}
-              <a className="underline underline-offset-2" href={portalApi.loginUrl(window.location.pathname)}>
-                Sign in first
-              </a>{" "}
-              if you would like to be kept posted.
+          <fieldset className="rounded-md border p-4" style={{ borderColor: "var(--border)" }}>
+            <legend className="px-1 text-sm font-medium">How can we reach you?</legend>
+            <p className="text-sm text-ink-muted">
+              Optional — but without it we cannot confirm your report, send you updates, or let
+              you check on it later, not even with the reference number.
             </p>
-          </div>
+
+            <div className="mt-3 grid gap-3 sm:grid-cols-2">
+              <div className="sm:col-span-2">
+                <Field label="Email address" hint="Where we send your confirmation">
+                  <Input
+                    type="email"
+                    autoComplete="email"
+                    value={contact.email}
+                    onChange={(e) => setContact({ ...contact, email: e.target.value })}
+                  />
+                </Field>
+              </div>
+              <Field label="Your name">
+                <Input
+                  autoComplete="name"
+                  value={contact.name}
+                  onChange={(e) => setContact({ ...contact, name: e.target.value })}
+                />
+              </Field>
+              <Field label="Phone number" hint="Only if a crew may need to call">
+                <Input
+                  type="tel"
+                  autoComplete="tel"
+                  value={contact.phone}
+                  onChange={(e) => setContact({ ...contact, phone: e.target.value })}
+                />
+              </Field>
+            </div>
+
+            {/*
+              Personal information is being collected here, so say why, here.
+              CIT-15 makes this configurable per municipality; the wording being
+              hardcoded is a limitation, its absence would be a PIPEDA one.
+            */}
+            <p className="mt-3 text-xs text-ink-faint">
+              We use these details only to handle this report and to let you check on it. They
+              are held under the City's records schedule and are not used for anything else.
+            </p>
+
+            {/* Restated where the consequence actually lands, because a reader
+                who skipped the paragraph above will read this one. */}
+            <p className="mt-3 text-sm" aria-live="polite">
+              {contact.email.trim()
+                ? "We will email you a confirmation and keep you posted."
+                : "Leave these blank and your report is anonymous — we will still act on it, but we will not be able to contact you or show it to you again."}
+            </p>
+
+            <p className="mt-2 text-sm text-ink-muted">
+              Have an account?{" "}
+              <a className="underline underline-offset-2" href={portalApi.loginUrl(window.location.pathname)}>
+                Sign in
+              </a>{" "}
+              and your reports are all kept in one place.
+            </p>
+          </fieldset>
         )}
 
         <div className="flex items-center justify-between gap-3">
