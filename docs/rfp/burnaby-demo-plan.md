@@ -1,36 +1,42 @@
 # Burnaby #177-08-26 — Master Plan for a Winning Demo
 
-**Written:** 2026-09-02 · **Companion:** `burnaby-gap-analysis.md` · **Tracking ticket:** CIT-1
+**Written:** 2026-09-02 · **Corrected:** 2026-09-07 (§0) · **Companion:** `burnaby-gap-analysis.md` · **Tracking ticket:** CIT-1
 
 ---
 
-## 0. Read this first — the date
+## 0. Read this first — the bid is live
 
-The RFP's own timetable (§1.3.1) is:
+**The RFP is still open.** September 2 was the deadline for submitting questions to the City, not
+for submitting a proposal.
 
-| Milestone | Estimated date |
-|---|---|
-| RFP Issued | August 12, 2026 |
-| **RFP Closing Date** | **September 2, 2026** |
-| Negotiation and Contracting | September 2026 |
-| Kick-Off Meeting | September/October 2026 |
+That is a correction to what this document said when it was written on 2026-09-02, and the reason it
+was wrong is worth keeping: §1.3.1 of the RFP labels September 2 as the "RFP Closing Date", and
+that table is the only schedule the issued PDF contains. It also says, in the same clause, that the
+dates are *estimated and subject to change at the sole discretion of the City*, and §2.1 and §6.8
+make addenda published on bids&tenders the operative source. **The document in the repository is
+not the current state of the procurement.** Anyone planning against it should check the portal.
 
-**The closing date is today.** This plan is therefore written for the *demonstration and negotiation*
-window that follows a submitted proposal — not for a pre-submission build. Three readings are
-possible and they need different things:
+### What this changes
 
-- **(a) The proposal went in.** Then this plan is right as written: a demo-ready build for the
-  shortlist/negotiation stage in September, with kick-off in Sept/Oct.
-- **(b) The proposal did not go in.** Then Burnaby is a *reference* opportunity — the same plan
-  builds the product for the next municipal RFP of this shape, and the demo becomes a sales asset.
-  Nothing below is wasted; only the deadline pressure changes.
-- **(c) A closing extension or addendum applies.** Check bidsandtenders for addenda (§2.1 requires
-  proponents to monitor the site).
+Everything in this plan was written for the wrong half of the process — a demonstration after a
+submitted proposal. It is now **pre-submission work with a live deadline**, which reorders what
+matters:
 
-**This is the one question that must be answered by a human before the schedule below is committed.**
-Everything else in this plan proceeds regardless.
+- **The response matrices are deliverables, not internal artefacts.** Appendix G and H (CIT-47) and
+  the Appendix I security questionnaire (CIT-44) are things the City will actually read and score.
+  They move from "write as the features land" to "on the critical path".
+- **The demo becomes supporting evidence rather than the main event.** It still matters — a working
+  demo is what makes a matrix believable — but a proposal is what gets scored.
+- **Scope discipline gets harder and more important.** Every Missing requirement is now something to
+  answer honestly in a scored document rather than something to build before a meeting. See §6: an
+  honest "Configuration" beside a working demo beats an "Out-of-the-box" that collapses in a
+  reference call, and that is now a bid-losing rather than a reputational risk.
 
----
+### The one thing still needed
+
+**The actual closing date.** "Open" is not a schedule. Everything below is sequenced so that
+stopping at any sprint boundary leaves something coherent, but the choice of *which* boundary to
+stop at cannot be made without a date. It is on bids&tenders; it is not in this repository.
 
 ## 1. Strategy in three sentences
 
@@ -211,11 +217,14 @@ From the brief's §9, each with a recommendation so the plan is not blocked:
 
 ## 8. Risks
 
-1. **Timeline (see §0).** Unresolved commercial question, not an engineering one.
-2. **Scope illusion.** 29 Missing requirements will not all be built. The plan deliberately builds the
-   ~15 that appear in the demo and answers the rest as Development/Future Release.
+1. **The closing date is unknown (see §0).** The bid is live, which makes this the sharpest risk on
+   the list rather than a resolved one: work is being sequenced against a deadline nobody has
+   written down. Commercial, not engineering.
+2. **Scope illusion.** Missing requirements will not all be built. The plan deliberately builds the
+   ones that appear in the demo and answers the rest as Development/Future Release — and now that
+   the bid is live, an over-claim in that matrix is a bid-losing risk, not a reputational one.
 3. **The form builder is the hard piece.** The brief says so and it is right. It is the whole of
    Sprint 2's value and the most likely thing to slip.
-4. **No CI today.** Everything we want to claim about quality and security assumes a pipeline that
-   does not exist. Cheap to fix, embarrassing if asked about.
-5. **Sequential reference numbers ship today.** Fix regardless of the outcome of this bid.
+4. ~~**No CI today.**~~ Fixed (CIT-41). Build, accessibility and security run on every commit, and
+   the health bundle is a CI artefact rather than something produced by hand.
+5. ~~**Sequential reference numbers ship today.**~~ Fixed (CIT-13).
