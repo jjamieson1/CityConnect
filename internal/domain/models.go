@@ -30,6 +30,7 @@ func AllModels() []any {
 		&BusinessCalendar{},
 		&SLAPolicy{},
 		&ServiceCategory{},
+		&CollectionNotice{},
 		&ServiceType{},
 		&NotificationTemplate{},
 		&Macro{},
@@ -48,6 +49,7 @@ func AllModels() []any {
 		&RequestEvent{},
 		&RequestLink{},
 		&Attachment{},
+		&RequestNotice{},
 		&ReferenceCounter{},
 
 		// Communications and reporting

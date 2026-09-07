@@ -33,6 +33,13 @@ type CatalogEntry struct {
 	Department   string             `json:"department,omitempty"`
 	NeedsPlace   bool               `json:"requiresLocation"`
 	Fields       []domain.FormField `json:"fields"`
+
+	// CollectionNotice is the wording to show before personal details are asked
+	// for, and NoticeID identifies the exact version — the client sends it back
+	// on submission so the record says what the resident actually read rather
+	// than whatever happened to be current when they pressed the button.
+	CollectionNotice string `json:"collectionNotice,omitempty"`
+	NoticeID         string `json:"noticeId,omitempty"`
 }
 
 // Catalog returns the services a citizen can report.
@@ -96,6 +103,15 @@ func (s *Service) Catalog(ctx context.Context, query string) ([]CatalogEntry, er
 		}
 		if entry.Fields == nil {
 			entry.Fields = []domain.FormField{}
+		}
+		if notice, err := s.catalog.CollectionNoticeFor(ctx, st.ID); err != nil {
+			// A missing notice must not remove the service from the catalogue.
+			// It is a compliance gap for an operator to close, not a reason a
+			// resident cannot report a hazard.
+			s.log.WarnContext(ctx, "could not resolve a collection notice",
+				"service", st.Code, "error", err)
+		} else if notice != nil {
+			entry.CollectionNotice, entry.NoticeID = notice.Body, notice.ID
 		}
 		if st.Department != nil {
 			entry.Department = firstNonEmpty(st.Department.PublicName, st.Department.Name)
@@ -307,13 +323,17 @@ func (s *Service) updatesFor(ctx context.Context, r *domain.Request) ([]MyUpdate
 // CreateInput is a citizen's report.
 type CreateInput struct {
 	ServiceTypeID string
-	Subject       string
-	Description   string
-	Address1      string
-	City          string
-	PostalCode    string
-	Ward          string
-	FormData      domain.JSONMap
+	// NoticeID is the collection-notice version the form displayed. Only the
+	// id travels: the text is read from that row server-side, so a client
+	// cannot write its own words into the compliance record.
+	NoticeID    string
+	Subject     string
+	Description string
+	Address1    string
+	City        string
+	PostalCode  string
+	Ward        string
+	FormData    domain.JSONMap
 }
 
 // Create files a request on the citizen's own behalf.
@@ -338,6 +358,8 @@ func (s *Service) Create(ctx context.Context, contact *domain.Contact, in Create
 	if err != nil {
 		return nil, err
 	}
+
+	s.recordNoticeShown(ctx, req.ID, in.NoticeID, st.ID)
 
 	view := s.project(req)
 	return &view, nil
@@ -420,8 +442,55 @@ func (s *Service) CreateGuest(ctx context.Context, guest GuestDetails, in Create
 		return nil, err
 	}
 
+	s.recordNoticeShown(ctx, req.ID, in.NoticeID, st.ID)
+
 	view := s.project(req)
 	return &view, nil
+}
+
+// recordNoticeShown stores the collection notice a submission was shown.
+//
+// Best effort, and deliberately so: the request is already filed, and failing
+// it now would lose a resident's report to protect a record *about* that
+// report. A gap here is logged loudly instead, because an unrecorded notice is
+// something an operator has to know about.
+//
+// The text is read from the notice row rather than taken from the client, so
+// the compliance record cannot be authored by whoever is submitting.
+func (s *Service) recordNoticeShown(ctx context.Context, requestID, noticeID, serviceTypeID string) {
+	notice, err := s.resolveShownNotice(ctx, noticeID, serviceTypeID)
+	if err != nil || notice == nil {
+		if err != nil {
+			s.log.ErrorContext(ctx, "could not resolve the collection notice shown",
+				"request", requestID, "error", err)
+		}
+		return
+	}
+
+	record := &domain.RequestNotice{
+		RequestID: requestID, NoticeID: notice.ID, Version: notice.Version,
+		Body: notice.Body, ShownAt: time.Now().UTC(),
+	}
+	if err := s.db.WithContext(ctx).Create(record).Error; err != nil {
+		s.log.ErrorContext(ctx, "could not record the collection notice shown",
+			"request", requestID, "error", err)
+	}
+}
+
+// resolveShownNotice prefers the version the client says it rendered, and falls
+// back to whatever is current.
+//
+// The client's word is trusted only to *select* a row, never to supply its
+// contents, and an unknown id degrades to the current notice rather than
+// recording nothing.
+func (s *Service) resolveShownNotice(ctx context.Context, noticeID, serviceTypeID string) (*domain.CollectionNotice, error) {
+	if noticeID != "" {
+		notice, err := s.catalog.NoticeVersion(ctx, noticeID)
+		if err == nil {
+			return notice, nil
+		}
+	}
+	return s.catalog.CollectionNoticeFor(ctx, serviceTypeID)
 }
 
 // reportableService resolves a service type a member of the public is allowed

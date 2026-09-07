@@ -41,6 +41,13 @@ func (s *Server) mountCatalog(r chi.Router) {
 		c.With(write).Delete("/{id}", s.handleDeleteCategory)
 	})
 
+	// The collection notice is a legal statement a municipality owns. Editing
+	// it publishes a new version rather than changing the old one.
+	r.Route("/collection-notices", func(c chi.Router) {
+		c.With(read).Get("/", s.handleListCollectionNotices)
+		c.With(write).Post("/", s.handleSaveCollectionNotice)
+	})
+
 	r.Route("/sla-policies", func(c chi.Router) {
 		c.With(read).Get("/", s.handleListSLAPolicies)
 		c.With(write).Post("/", s.handleSaveSLAPolicy)
@@ -230,6 +237,32 @@ func (s *Server) handleDeleteTemplate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeNoContent(w)
+}
+
+func (s *Server) handleListCollectionNotices(w http.ResponseWriter, r *http.Request) {
+	items, err := s.Catalog.ListCollectionNotices(r.Context())
+	if err != nil {
+		fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, listing(items))
+}
+
+func (s *Server) handleSaveCollectionNotice(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		ServiceTypeID string `json:"serviceTypeId,omitempty"`
+		Body          string `json:"body"`
+	}
+	if !decode(w, r, &body) {
+		return
+	}
+	saved, err := s.Catalog.SaveCollectionNotice(r.Context(),
+		principalFrom(r.Context()).Actor(), body.ServiceTypeID, body.Body)
+	if err != nil {
+		fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, saved)
 }
 
 func (s *Server) handleListCategories(w http.ResponseWriter, r *http.Request) {

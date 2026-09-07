@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"strings"
+	"time"
 
 	"gorm.io/gorm"
 
@@ -122,4 +123,37 @@ func nestSeededCategories(ctx context.Context, db *gorm.DB) error {
 		}
 	}
 	return nil
+}
+
+// seedCollectionNotice installs a default collection notice if a deployment has
+// none.
+//
+// Wording a municipality has not approved is not something to invent lightly,
+// and this text is deliberately generic and replaceable — it says only what is
+// true of the system's actual behaviour. But a portal that collects an email
+// address with *no* notice at all is a PIPEDA problem from the first
+// submission, and shipping that as the default is worse than shipping a
+// starting point a City will edit. The admin surface publishes a new version;
+// this one is never overwritten once anything exists.
+func seedCollectionNotice(ctx context.Context, db *gorm.DB) error {
+	var existing int64
+	if err := db.WithContext(ctx).Model(&domain.CollectionNotice{}).
+		Count(&existing).Error; err != nil {
+		return err
+	}
+	if existing > 0 {
+		return nil
+	}
+
+	return db.WithContext(ctx).Create(&domain.CollectionNotice{
+		Version: 1,
+		Body: "We collect your name and contact details only to handle this report, " +
+			"to confirm we have it, and to let you check on its progress. They are " +
+			"kept under the City's records retention schedule and are not used for " +
+			"anything else or shared outside the City except where the law requires " +
+			"it. You can ask us what we hold about you, and ask for it to be " +
+			"corrected. Reporting without contact details is also possible, and no " +
+			"personal information is collected when you do.",
+		EffectiveAt: time.Now().UTC(),
+	}).Error
 }

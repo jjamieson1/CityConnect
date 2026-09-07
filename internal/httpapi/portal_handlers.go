@@ -246,6 +246,10 @@ type portalCreateBody struct {
 	ContactEmail string `json:"contactEmail,omitempty"`
 	ContactPhone string `json:"contactPhone,omitempty"`
 
+	// NoticeID is the collection-notice version the form displayed, echoed back
+	// so the record reflects what the resident read.
+	NoticeID string `json:"noticeId,omitempty"`
+
 	// FormToken is the single-use token from GET /portal/form-token. Required
 	// for an anonymous submission and ignored for a signed-in one, which has an
 	// account behind it already.
@@ -376,7 +380,7 @@ func (s *Server) handlePortalCreate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	in := portal.CreateInput{
-		ServiceTypeID: body.ServiceTypeID, Subject: body.Subject,
+		ServiceTypeID: body.ServiceTypeID, NoticeID: body.NoticeID, Subject: body.Subject,
 		Description: body.Description, Address1: body.Address1, City: body.City,
 		PostalCode: body.PostalCode, Ward: body.Ward, FormData: body.FormData,
 	}

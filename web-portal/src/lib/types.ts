@@ -23,6 +23,10 @@ export interface CatalogEntry {
   category?: string;
   /** The category and its ancestors, outermost first. */
   categoryPath?: string[];
+  /** Wording to show before personal details are asked for. */
+  collectionNotice?: string;
+  /** The exact notice version, echoed back on submission. */
+  noticeId?: string;
   description?: string;
   department?: string;
   requiresLocation: boolean;

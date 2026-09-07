@@ -387,6 +387,9 @@ function Report({ signedIn }: { signedIn: boolean }) {
         address1: form.address1, city: form.city, postalCode: form.postalCode,
         formData: extra,
         formToken: formToken.data?.token,
+        // The version rendered above, so the record reflects what this resident
+        // read rather than whatever is current when the server handles it.
+        noticeId: entry!.noticeId,
         websiteUrl,
         // Empty means anonymous. The server decides on the same rule, so the
         // two cannot disagree about which deal the resident chose.
@@ -618,14 +621,21 @@ function Report({ signedIn }: { signedIn: boolean }) {
             </div>
 
             {/*
-              Personal information is being collected here, so say why, here.
-              CIT-15 makes this configurable per municipality; the wording being
-              hardcoded is a limitation, its absence would be a PIPEDA one.
+              The City's own wording, versioned server-side. Rendered here, at
+              the point of collection, because that is where PIPEDA and the
+              OPC's meaningful-consent guidance require it to be legible — not
+              behind a link to a privacy policy nobody opens.
             */}
-            <p className="mt-3 text-xs text-ink-faint">
-              We use these details only to handle this report and to let you check on it. They
-              are held under the City's records schedule and are not used for anything else.
-            </p>
+            {entry.collectionNotice && (
+              <div className="mt-3 rounded-md p-3" style={{ background: "var(--surface-2)" }}>
+                <h3 className="text-xs font-semibold uppercase tracking-wide text-ink-muted">
+                  How we use your details
+                </h3>
+                <p className="mt-1 whitespace-pre-wrap text-xs text-ink-muted">
+                  {entry.collectionNotice}
+                </p>
+              </div>
+            )}
 
             {/* Restated where the consequence actually lands, because a reader
                 who skipped the paragraph above will read this one. */}
