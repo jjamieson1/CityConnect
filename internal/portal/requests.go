@@ -31,12 +31,21 @@ type CatalogEntry struct {
 	Fields      []domain.FormField `json:"fields"`
 }
 
-// Catalog returns the services a citizen can report, grouped by category in
-// the order the console configured.
-func (s *Service) Catalog(ctx context.Context) ([]CatalogEntry, error) {
+// Catalog returns the services a citizen can report.
+//
+// With no query they come back grouped by category in the order the console
+// configured. With one they come back ranked, because somebody who has typed
+// something is looking for one service rather than browsing all of them.
+func (s *Service) Catalog(ctx context.Context, query string) ([]CatalogEntry, error) {
 	types, err := s.catalog.ListServiceTypes(ctx, catalog.ServiceTypeFilter{PublicOnly: true})
 	if err != nil {
 		return nil, err
+	}
+	// Ranked here rather than filtered in SQL: the search has to tolerate a
+	// misspelling, and the public catalogue is small enough that scanning it
+	// costs less than a second query would.
+	if strings.TrimSpace(query) != "" {
+		types = catalog.Search(types, query)
 	}
 
 	out := make([]CatalogEntry, 0, len(types))

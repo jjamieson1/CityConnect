@@ -108,7 +108,7 @@ func seedSLAPolicies(ctx context.Context, db *gorm.DB, calendarID string) (map[s
 		response int
 		resolve  int
 	}{
-		{"standard", "Standard service", 8 * 60, 5 * 8 * 60},   // 1 day / 5 days
+		{"standard", "Standard service", 8 * 60, 5 * 8 * 60},    // 1 day / 5 days
 		{"urgent", "Urgent service", 60, 8 * 60},                // 1 hour / 1 day
 		{"routine", "Routine service", 2 * 8 * 60, 20 * 8 * 60}, // 2 days / 20 days
 	}
@@ -215,9 +215,10 @@ func seedServiceTypes(ctx context.Context, db *gorm.DB, depts, queues, policies 
 	defs := []domain.ServiceType{
 		{
 			Code: "POTHOLE", Name: "Pothole repair", Category: "Roads",
-			Description:      "Report a pothole or damaged road surface.",
-			DepartmentID:     depts["PW"], DefaultQueueID: queues["ROADS"],
-			SLAPolicyID:      policies["standard"], DefaultPriority: domain.PriorityNormal,
+			Synonyms:     "pot hole, hole in the road, road damage, broken road, sinkhole, crater",
+			Description:  "Report a pothole or damaged road surface.",
+			DepartmentID: depts["PW"], DefaultQueueID: queues["ROADS"],
+			SLAPolicyID: policies["standard"], DefaultPriority: domain.PriorityNormal,
 			RequiresLocation: true, PublicVisible: true, Active: true, AllowsAttachments: true,
 			IntakeForm: domain.JSONMap{"fields": []domain.FormField{
 				{Key: "size", Label: "Approximate size", Type: "select",
@@ -228,9 +229,10 @@ func seedServiceTypes(ctx context.Context, db *gorm.DB, depts, queues, policies 
 		},
 		{
 			Code: "MISSED-COLLECTION", Name: "Missed waste collection", Category: "Waste",
-			Description:      "Report waste, recycling or organics that was not collected.",
-			DepartmentID:     depts["PW"], DefaultQueueID: queues["WASTE"],
-			SLAPolicyID:      policies["standard"], DefaultPriority: domain.PriorityNormal,
+			Synonyms:     "bin, bins, garbage, rubbish, trash, recycling, missed pickup, not collected, green bin",
+			Description:  "Report waste, recycling or organics that was not collected.",
+			DepartmentID: depts["PW"], DefaultQueueID: queues["WASTE"],
+			SLAPolicyID: policies["standard"], DefaultPriority: domain.PriorityNormal,
 			RequiresLocation: true, PublicVisible: true, Active: true,
 			IntakeForm: domain.JSONMap{"fields": []domain.FormField{
 				{Key: "stream", Label: "Which stream", Type: "select",
@@ -240,9 +242,10 @@ func seedServiceTypes(ctx context.Context, db *gorm.DB, depts, queues, policies 
 		},
 		{
 			Code: "WATER-MAIN", Name: "Water main break", Category: "Water",
-			Description:      "Report a suspected water main break or major leak.",
-			DepartmentID:     depts["WATER"], DefaultQueueID: queues["WATER-OPS"],
-			SLAPolicyID:      policies["urgent"], DefaultPriority: domain.PriorityUrgent,
+			Synonyms:     "burst pipe, water leak, flooding, no water, low pressure, water in the street",
+			Description:  "Report a suspected water main break or major leak.",
+			DepartmentID: depts["WATER"], DefaultQueueID: queues["WATER-OPS"],
+			SLAPolicyID: policies["urgent"], DefaultPriority: domain.PriorityUrgent,
 			RequiresLocation: true, PublicVisible: true, Active: true,
 			IntakeForm: domain.JSONMap{"fields": []domain.FormField{
 				{Key: "flowing", Label: "Is water flowing onto the road?", Type: "checkbox"},
@@ -251,9 +254,10 @@ func seedServiceTypes(ctx context.Context, db *gorm.DB, depts, queues, policies 
 		},
 		{
 			Code: "NOISE", Name: "Noise complaint", Category: "Bylaw",
+			Synonyms:     "loud music, party, barking dog, construction noise, neighbour",
 			Description:  "Report a noise bylaw concern.",
 			DepartmentID: depts["BYLAW"], DefaultQueueID: queues["BYLAW-GEN"],
-			SLAPolicyID:  policies["standard"], DefaultPriority: domain.PriorityNormal,
+			SLAPolicyID: policies["standard"], DefaultPriority: domain.PriorityNormal,
 			RequiresLocation: true, PublicVisible: true, Active: true,
 			IntakeForm: domain.JSONMap{"fields": []domain.FormField{
 				{Key: "noiseType", Label: "Type of noise", Type: "select",
@@ -264,9 +268,10 @@ func seedServiceTypes(ctx context.Context, db *gorm.DB, depts, queues, policies 
 		},
 		{
 			Code: "PARK-MAINT", Name: "Park maintenance", Category: "Parks",
+			Synonyms:     "playground, broken bench, fallen tree, branch, overgrown grass, litter in the park",
 			Description:  "Report damaged or unsafe park equipment, litter or vandalism.",
 			DepartmentID: depts["PARKS"], DefaultQueueID: queues["PARKS-MAINT"],
-			SLAPolicyID:  policies["routine"], DefaultPriority: domain.PriorityLow,
+			SLAPolicyID: policies["routine"], DefaultPriority: domain.PriorityLow,
 			RequiresLocation: true, PublicVisible: true, Active: true,
 			IntakeForm: domain.JSONMap{"fields": []domain.FormField{
 				{Key: "parkName", Label: "Park name", Type: "text", Required: true},
@@ -276,9 +281,10 @@ func seedServiceTypes(ctx context.Context, db *gorm.DB, depts, queues, policies 
 		},
 		{
 			Code: "GENERAL", Name: "General enquiry", Category: "General",
+			Synonyms:     "question, something else, not listed, ask",
 			Description:  "Any request that does not fit another category.",
 			DepartmentID: depts["311"], DefaultQueueID: queues["INTAKE"],
-			SLAPolicyID:  policies["standard"], DefaultPriority: domain.PriorityNormal,
+			SLAPolicyID: policies["standard"], DefaultPriority: domain.PriorityNormal,
 			PublicVisible: true, Active: true,
 		},
 	}

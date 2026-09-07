@@ -136,7 +136,10 @@ func (s *Server) handlePortalLogout(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handlePortalCatalog(w http.ResponseWriter, r *http.Request) {
-	entries, err := s.Portal.Catalog(r.Context())
+	// Always 200 with an array, even when nothing matches. A no-results search
+	// is not a missing page, and a 404 here would have the client render an
+	// error instead of the "try a different word, or browse" it should.
+	entries, err := s.Portal.Catalog(r.Context(), r.URL.Query().Get("q"))
 	if err != nil {
 		failPortal(w, r, err)
 		return

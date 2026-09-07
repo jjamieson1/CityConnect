@@ -7,10 +7,21 @@ import "time"
 // default, the SLA policy, and the binding to a C2 Service Card.
 type ServiceType struct {
 	Base
-	Code         string `gorm:"size:60;uniqueIndex;not null" json:"code"`
-	Name         string `gorm:"size:200;not null" json:"name"`
-	Category     string `gorm:"size:80;index" json:"category,omitempty"`
-	Description  string `gorm:"type:text" json:"description,omitempty"`
+	Code        string `gorm:"size:60;uniqueIndex;not null" json:"code"`
+	Name        string `gorm:"size:200;not null" json:"name"`
+	Category    string `gorm:"size:80;index" json:"category,omitempty"`
+	Description string `gorm:"type:text" json:"description,omitempty"`
+
+	// Synonyms are the words residents actually use, which are rarely the
+	// City's own service names: "pot hole", "road damage", "hole in the road"
+	// for what the catalogue calls Pothole Repair.
+	//
+	// Comma-separated and staff-editable. This is the field that decides
+	// whether somebody finds the right service or gives up and phones, so it
+	// is worth filling in properly for every service that has a common name
+	// different from its official one.
+	Synonyms string `gorm:"type:text" json:"synonyms,omitempty"`
+
 	DepartmentID string `gorm:"type:char(36);index" json:"departmentId,omitempty"`
 
 	DefaultQueueID    string `gorm:"type:char(36);index" json:"defaultQueueId,omitempty"`

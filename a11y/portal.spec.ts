@@ -78,13 +78,22 @@ async function stubApi(page: Page, { signedIn = false } = {}) {
     }),
   );
 
-  await page.route("**/api/portal/catalog", (route) =>
-    route.fulfill({
+  // Search is server-side, so the stub answers ?q= too. Anything with "graf"
+  // narrows to one result; a nonsense term returns none, which is the state the
+  // no-results fallback has to handle.
+  await page.route("**/api/portal/catalog**", (route) => {
+    const q = new URL(route.request().url()).searchParams.get("q") ?? "";
+    let items = CATALOG.items;
+    if (q.trim()) {
+      const term = q.trim().toLowerCase();
+      items = items.filter((i) => `${i.name} ${i.category}`.toLowerCase().includes(term));
+    }
+    return route.fulfill({
       status: 200,
       contentType: "application/json",
-      body: JSON.stringify(CATALOG),
-    }),
-  );
+      body: JSON.stringify({ items }),
+    });
+  });
 
   await page.route("**/api/portal/me", (route) =>
     signedIn
@@ -124,6 +133,37 @@ test("landing page — finding a service", async ({ page }) => {
   await expect(page.getByRole("heading", { name: /roads & transport/i })).toBeVisible();
 
   const results = await scan(page);
+  expect(describe(results.violations)).toBe("");
+});
+
+/**
+ * Search is the first thing an evaluator touches and the first thing a resident
+ * does. Both the results and the dead end have to be usable without sight.
+ */
+test("catalogue search — results and the dead end are both announced", async ({ page }) => {
+  await stubApi(page);
+  await page.goto("/");
+  await expect(page.getByRole("link", { name: /pothole repair/i })).toBeVisible();
+
+  const box = page.getByRole("searchbox", { name: /search services/i });
+  await box.fill("graf");
+
+  // Narrowed, and the count is announced rather than only shown.
+  await expect(page.getByRole("link", { name: /graffiti removal/i })).toBeVisible();
+  await expect(page.getByRole("link", { name: /pothole repair/i })).toHaveCount(0);
+  await expect(page.getByRole("status")).toContainText(/1 service matches “graf”/i);
+
+  let results = await scan(page);
+  expect(describe(results.violations)).toBe("");
+
+  // The dead end. This is where a resident gives up and phones instead, so it
+  // has to offer a way onward — and say so out loud.
+  await box.fill("zzzznothing");
+  await expect(page.getByText(/nothing matches/i)).toBeVisible();
+  await expect(page.getByRole("status")).toContainText(/no services match/i);
+  await expect(page.getByRole("button", { name: /browse all services/i })).toBeVisible();
+
+  results = await scan(page);
   expect(describe(results.violations)).toBe("");
 });
 

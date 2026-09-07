@@ -171,30 +171,42 @@ function Landing({ signedIn }: { signedIn: boolean }) {
   const [params] = useSearchParams();
   const [search, setSearch] = useState("");
 
-  const catalog = useQuery({ queryKey: ["portal", "catalog"], queryFn: () => portalApi.catalog() });
+  // Debounced, so a search runs when somebody pauses rather than on every
+  // keystroke. 250ms is under the threshold where typing feels laggy and well
+  // above the rate a person actually types.
+  const [debounced, setDebounced] = useState("");
+  useEffect(() => {
+    const timer = setTimeout(() => setDebounced(search), 250);
+    return () => clearTimeout(timer);
+  }, [search]);
+
+  const searching = debounced.trim().length > 0;
+  const catalog = useQuery({
+    queryKey: ["portal", "catalog", debounced],
+    queryFn: () => portalApi.catalog(debounced),
+    // Keeps the previous results on screen while the next ones load, so the
+    // list does not blank out between keystrokes.
+    placeholderData: (previous) => previous,
+  });
   const mine = useQuery({
     queryKey: ["portal", "requests", "open"],
     queryFn: () => portalApi.myRequests(true),
     enabled: signedIn,
   });
 
-  // Grouped by category, because a resident scans for the area of life their
-  // problem belongs to rather than reading an alphabetical list.
+  const items = catalog.data?.items ?? [];
+
+  // Grouped by category when browsing, because a resident scans for the area of
+  // life their problem belongs to. Not when searching: the server has ranked
+  // the results and regrouping them would throw that ranking away.
   const grouped = useMemo(() => {
-    const items = (catalog.data?.items ?? []).filter((c) =>
-      search.trim() === ""
-        ? true
-        : `${c.name} ${c.description ?? ""} ${c.category ?? ""}`
-            .toLowerCase()
-            .includes(search.toLowerCase()),
-    );
     const byCategory = new Map<string, CatalogEntry[]>();
     for (const item of items) {
       const key = item.category || "Other";
       byCategory.set(key, [...(byCategory.get(key) ?? []), item]);
     }
     return [...byCategory.entries()].sort(([a], [b]) => a.localeCompare(b));
-  }, [catalog.data, search]);
+  }, [items]);
 
   return (
     <div className="space-y-6">
@@ -232,24 +244,61 @@ function Landing({ signedIn }: { signedIn: boolean }) {
         </div>
       )}
 
-      <Input
-        value={search}
-        onChange={(e) => setSearch(e.target.value)}
-        placeholder="Search services — pothole, garbage, noise…"
-        aria-label="Search services"
-      />
+      <div>
+        <Input
+          type="search"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search services — pothole, garbage, noise…"
+          aria-label="Search services"
+          aria-describedby="search-results-status"
+        />
+        {/*
+          Results change without the page reloading and without focus moving, so
+          a screen reader is told how many there are. Polite rather than
+          assertive: it should be heard between keystrokes, not interrupt them.
+          WCAG 4.1.3.
+        */}
+        <p id="search-results-status" role="status" aria-live="polite" className="sr-only">
+          {searching
+            ? items.length === 0
+              ? `No services match “${debounced}”.`
+              : items.length === 1
+                ? `1 service matches “${debounced}”.`
+                : `${items.length} services match “${debounced}”.`
+            : ""}
+        </p>
+      </div>
 
       {catalog.isLoading ? (
         <Spinner />
       ) : catalog.error ? (
         <ErrorNote error={catalog.error} onRetry={() => void catalog.refetch()} />
       ) : grouped.length === 0 ? (
-        <Empty title="Nothing matches that" hint="Try a different word, or browse the full list." />
+        // A dead end is where a resident gives up and phones instead, so the
+        // no-results state offers the two things that actually help: try again,
+        // or reach a person. G·1-012 asks for exactly this.
+        <div className="cc-card p-5">
+          <p className="font-medium">Nothing matches “{debounced}”</p>
+          <p className="mt-1 text-sm text-ink-muted">
+            Try a different word — most services can be found by the everyday name for the
+            problem rather than the City's name for the service.
+          </p>
+          <div className="mt-4 flex flex-wrap gap-3">
+            <Button onClick={() => setSearch("")}>Browse all services</Button>
+            <Link className="cc-btn" to="/new/GENERAL">
+              Report something not listed
+            </Link>
+          </div>
+          <p className="mt-4 text-sm text-ink-muted">
+            Still stuck? Contact the City directly and somebody will point you the right way.
+          </p>
+        </div>
       ) : (
         grouped.map(([category, items]) => (
           <section key={category}>
             <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-ink-muted">
-              {category}
+              {searching ? `Best matches · ${category}` : category}
             </h2>
             <div className="grid gap-3 sm:grid-cols-2">
               {items.map((entry) => (
