@@ -29,6 +29,7 @@ func AllModels() []any {
 		// Catalogue
 		&BusinessCalendar{},
 		&SLAPolicy{},
+		&ServiceCategory{},
 		&ServiceType{},
 		&NotificationTemplate{},
 		&Macro{},

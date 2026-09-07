@@ -124,6 +124,23 @@ func (s *Service) SaveServiceType(ctx context.Context, actor audit.Actor, st *do
 		st.DefaultPriority = domain.PriorityNormal
 	}
 
+	// The category name is denormalised onto the service, and this is the only
+	// place a service may set it. Taking it from the category rather than from
+	// the caller means a service cannot be labelled with a category it is not
+	// actually filed under — which routing rules would then match on.
+	if st.CategoryID != "" {
+		var cat domain.ServiceCategory
+		if err := s.db.WithContext(ctx).First(&cat, "id = ?", st.CategoryID).Error; err != nil {
+			return nil, fmt.Errorf("%w: unknown category", ErrInvalidInput)
+		}
+		st.Category = cat.Name
+	} else {
+		// Uncategorised is allowed — a service that has not been filed yet
+		// should still be reportable rather than invisible — but it must not
+		// keep a stale label from a category it no longer belongs to.
+		st.Category = ""
+	}
+
 	action := "service_type.created"
 	if st.ID != "" {
 		action = "service_type.updated"

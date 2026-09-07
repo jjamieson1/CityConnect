@@ -202,10 +202,16 @@ function Landing({ signedIn }: { signedIn: boolean }) {
   const grouped = useMemo(() => {
     const byCategory = new Map<string, CatalogEntry[]>();
     for (const item of items) {
-      const key = item.category || "Other";
+      // Group by the *top* of the category path, not the leaf. A resident
+      // scanning for "Roads & transport" should find Potholes and Street
+      // lighting together underneath it rather than as two separate headings.
+      const key = item.categoryPath?.[0] || item.category || "Other";
       byCategory.set(key, [...(byCategory.get(key) ?? []), item]);
     }
-    return [...byCategory.entries()].sort(([a], [b]) => a.localeCompare(b));
+    // The server returns categories in the order staff configured, and services
+    // within them ranked when searching. Preserving insertion order keeps both;
+    // sorting alphabetically here would throw both away.
+    return [...byCategory.entries()];
   }, [items]);
 
   return (
@@ -308,6 +314,13 @@ function Landing({ signedIn }: { signedIn: boolean }) {
                   className="cc-card block p-4 transition-colors hover:border-[var(--accent)]"
                 >
                   <p className="font-medium">{entry.name}</p>
+                  {/* The sub-category, when there is one below the heading —
+                      "Roads & transport" is the group, "Potholes" the shelf. */}
+                  {(entry.categoryPath?.length ?? 0) > 1 && (
+                    <p className="mt-0.5 text-xs text-ink-faint">
+                      {entry.categoryPath!.slice(1).join(" › ")}
+                    </p>
+                  )}
                   {entry.description && (
                     <p className="mt-1 text-sm text-ink-muted">{entry.description}</p>
                   )}

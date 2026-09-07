@@ -32,6 +32,15 @@ func (s *Server) mountCatalog(r chi.Router) {
 		c.With(write).Delete("/{id}", s.handleDeleteServiceType)
 	})
 
+	// Categories are configuration a business user owns: renaming, reordering
+	// and reparenting are things a City does without a deploy.
+	r.Route("/service-categories", func(c chi.Router) {
+		c.With(read).Get("/", s.handleListCategories)
+		c.With(write).Post("/", s.handleSaveCategory)
+		c.With(write).Patch("/{id}", s.handleSaveCategory)
+		c.With(write).Delete("/{id}", s.handleDeleteCategory)
+	})
+
 	r.Route("/sla-policies", func(c chi.Router) {
 		c.With(read).Get("/", s.handleListSLAPolicies)
 		c.With(write).Post("/", s.handleSaveSLAPolicy)
@@ -221,6 +230,43 @@ func (s *Server) handleDeleteTemplate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeNoContent(w)
+}
+
+func (s *Server) handleListCategories(w http.ResponseWriter, r *http.Request) {
+	// Tree rather than flat: the console renders it as one, and assembling it
+	// per-client would mean every consumer reimplementing the ordering.
+	items, err := s.Catalog.CategoryTree(r.Context(), queryBool(r, "includeInactive"))
+	if err != nil {
+		fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, listing(items))
+}
+
+func (s *Server) handleSaveCategory(w http.ResponseWriter, r *http.Request) {
+	var body domain.ServiceCategory
+	if !decode(w, r, &body) {
+		return
+	}
+	if id := chi.URLParam(r, "id"); id != "" {
+		body.ID = id
+	}
+	saved, err := s.Catalog.SaveCategory(r.Context(), principalFrom(r.Context()).Actor(), &body)
+	if err != nil {
+		fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, saved)
+}
+
+func (s *Server) handleDeleteCategory(w http.ResponseWriter, r *http.Request) {
+	err := s.Catalog.DeleteCategory(r.Context(), principalFrom(r.Context()).Actor(),
+		chi.URLParam(r, "id"))
+	if err != nil {
+		fail(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // ---------------------------------------------------------------------------

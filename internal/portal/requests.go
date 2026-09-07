@@ -21,14 +21,18 @@ import (
 // projection of ServiceType: the internal queue, SLA policy and routing
 // configuration are none of the public's business.
 type CatalogEntry struct {
-	ID          string             `json:"id"`
-	Code        string             `json:"code"`
-	Name        string             `json:"name"`
-	Category    string             `json:"category,omitempty"`
-	Description string             `json:"description,omitempty"`
-	Department  string             `json:"department,omitempty"`
-	NeedsPlace  bool               `json:"requiresLocation"`
-	Fields      []domain.FormField `json:"fields"`
+	ID       string `json:"id"`
+	Code     string `json:"code"`
+	Name     string `json:"name"`
+	Category string `json:"category,omitempty"`
+	// CategoryPath is the category and its ancestors, outermost first, so the
+	// portal can group by the top level and show "Roads & transport →
+	// Potholes" without a second request per service.
+	CategoryPath []string           `json:"categoryPath,omitempty"`
+	Description  string             `json:"description,omitempty"`
+	Department   string             `json:"department,omitempty"`
+	NeedsPlace   bool               `json:"requiresLocation"`
+	Fields       []domain.FormField `json:"fields"`
 }
 
 // Catalog returns the services a citizen can report.
@@ -48,6 +52,31 @@ func (s *Service) Catalog(ctx context.Context, query string) ([]CatalogEntry, er
 		types = catalog.Search(types, query)
 	}
 
+	// One lookup per distinct category rather than per service: a catalogue of
+	// fifty services across six categories should cost six walks, not fifty.
+	paths := map[string][]string{}
+	pathFor := func(categoryID string) []string {
+		if categoryID == "" {
+			return nil
+		}
+		if p, ok := paths[categoryID]; ok {
+			return p
+		}
+		nodes, err := s.catalog.CategoryPath(ctx, categoryID)
+		if err != nil {
+			s.log.WarnContext(ctx, "could not resolve a category path",
+				"category", categoryID, "error", err)
+			paths[categoryID] = nil
+			return nil
+		}
+		names := make([]string, 0, len(nodes))
+		for _, n := range nodes {
+			names = append(names, n.Name)
+		}
+		paths[categoryID] = names
+		return names
+	}
+
 	out := make([]CatalogEntry, 0, len(types))
 	for i := range types {
 		st := &types[i]
@@ -61,7 +90,8 @@ func (s *Service) Catalog(ctx context.Context, query string) ([]CatalogEntry, er
 		}
 		entry := CatalogEntry{
 			ID: st.ID, Code: st.Code, Name: st.Name, Category: st.Category,
-			Description: st.Description, NeedsPlace: st.RequiresLocation,
+			CategoryPath: pathFor(st.CategoryID),
+			Description:  st.Description, NeedsPlace: st.RequiresLocation,
 			Fields: fields,
 		}
 		if entry.Fields == nil {

@@ -43,6 +43,14 @@ func Run(ctx context.Context, db *gorm.DB, cfg *config.Config, log *slog.Logger)
 	if err := seedServiceTypes(ctx, db, departments, queues, policies); err != nil {
 		return err
 	}
+	// After the service types exist, so a fresh deployment and an upgrade both
+	// end with every service filed under a real category.
+	if err := adoptFlatCategories(ctx, db, log); err != nil {
+		return err
+	}
+	if err := nestSeededCategories(ctx, db); err != nil {
+		return err
+	}
 	if err := seedTemplates(ctx, db); err != nil {
 		return err
 	}

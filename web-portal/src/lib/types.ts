@@ -21,6 +21,8 @@ export interface CatalogEntry {
   code: string;
   name: string;
   category?: string;
+  /** The category and its ancestors, outermost first. */
+  categoryPath?: string[];
   description?: string;
   department?: string;
   requiresLocation: boolean;
