@@ -26,6 +26,9 @@ const CATALOG = {
       description: "Report a pothole or damaged road surface.",
       department: "Public Works",
       requiresLocation: true,
+      // Elapsed hours the server computed from the SLA policy and the working
+      // calendar. Deliberately spanning both phrasings the page has to produce.
+      expect: { firstResponseHours: 8, resolutionHours: 72 },
       collectionNotice:
         "We collect your name and contact details only to handle this report, to confirm we " +
         "have it, and to let you check on its progress. They are kept under the City's records " +
@@ -171,6 +174,63 @@ test("landing page — the promoted shortcut row", async ({ page }) => {
   // resident who browses rather than uses the shortcuts is not sent looking.
   await expect(page.getByRole("heading", { name: /parks & public space/i })).toBeVisible();
   expect(await page.getByRole("link", { name: /graffiti removal/i }).count()).toBe(2);
+
+  const results = await scan(page);
+  expect(describe(results.violations)).toBe("");
+});
+
+/**
+ * The whole journey, in one test: find a service, read what happens next, start
+ * the report.
+ *
+ * The individual pages are scanned elsewhere. What this covers is the wiring
+ * between them — a catalogue card that still points at the old route, or a
+ * "Start this report" button that goes nowhere, breaks the flow without
+ * breaking any page, and every other test here would stay green.
+ */
+test("service detail — what happens next, then into the form", async ({ page }) => {
+  await stubApi(page);
+  await page.goto("/");
+
+  await page.getByRole("link", { name: /pothole repair/i }).click();
+  await expect(page).toHaveURL(/\/service\/POTHOLE$/);
+  await expect(page.getByRole("heading", { level: 1, name: /pothole repair/i })).toBeVisible();
+
+  // The times are computed, not typed: 8 hours reads as hours, 72 as days.
+  await expect(page.getByText(/within 8 hours/i)).toBeVisible();
+  await expect(page.getByText(/within 3 days/i)).toBeVisible();
+  // And the department that owns it, by its public name.
+  await expect(page.getByText(/public works/i)).toBeVisible();
+
+  // No knowledge base is wired up, so that section must be absent rather than
+  // an empty box.
+  await expect(page.getByRole("region", { name: /before you report this/i })).toHaveCount(0);
+
+  const detail = await scan(page);
+  expect(describe(detail.violations)).toBe("");
+
+  await page.getByRole("link", { name: /start this report/i }).click();
+  await expect(page).toHaveURL(/\/new\/POTHOLE$/);
+  await expect(page.getByRole("heading", { level: 1, name: /pothole repair/i })).toBeVisible();
+
+  // And back the way they came, to the service rather than the whole
+  // catalogue.
+  await page.getByRole("link", { name: /^← Pothole repair$/ }).click();
+  await expect(page).toHaveURL(/\/service\/POTHOLE$/);
+});
+
+/**
+ * A service with no SLA policy must promise nothing at all, rather than
+ * rendering a sentence with a blank where the number should be.
+ */
+test("service detail — no policy, no promise", async ({ page }) => {
+  await stubApi(page);
+  await page.goto("/service/GRAFFITI");
+
+  await expect(page.getByRole("heading", { level: 1, name: /graffiti removal/i })).toBeVisible();
+  await expect(page.getByText(/what happens next/i)).toBeVisible();
+  await expect(page.getByText(/usually within/i)).toHaveCount(0);
+  await expect(page.getByText(/current targets/i)).toHaveCount(0);
 
   const results = await scan(page);
   expect(describe(results.violations)).toBe("");

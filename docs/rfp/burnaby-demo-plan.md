@@ -151,10 +151,16 @@ Sequenced so that **a demo exists at the end of every sprint** and each sprint's
 better than the last. If the runway is cut, we stop at a sprint boundary and still have something to
 show.
 
-### Sprint 1 — "The front door" (the demo minimum)
+### Sprint 1 — "The front door" (the demo minimum) — **complete 2026-09-08**
 Act 1 + Act 2. Anonymous/guest intake, non-sequential references, catalogue search and hierarchy,
 public tracking with a second factor and rate limiting, guest email notification, a working malware
 scanner. Without this sprint there is no demo.
+
+Delivered: CIT-11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 26, 41. **Act 2 runs end to end today.**
+Act 1 runs as far as "attach a photo and submit without an account" — the three beats still missing
+from it are the **conditional field** (CIT-24), the **map pin** and the **boundary check**
+(CIT-35, CIT-36), which belong to Sprints 2 and 3. Rehearse Act 1 against that gap rather than
+discovering it in the room.
 
 ### Sprint 2 — "The City runs it" (the differentiator)
 Act 3. Visual form builder with conditional fields, config governance (draft → review → approve →

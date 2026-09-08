@@ -79,6 +79,11 @@ export default function Portal() {
           ) : (
             <Routes>
               <Route index element={<Landing signedIn={signedIn} />} />
+              {/* The step between finding a service and filling in its form.
+                  /new/:code stays reachable on its own — an old link, a
+                  bookmark and the C2 service card all point straight at it,
+                  and none of them should break to make room for this. */}
+              <Route path="/service/:code" element={<ServiceDetail />} />
               <Route path="/new/:code" element={<Report signedIn={signedIn} />} />
               {/* Public by design: no signedIn prop, because needing an account
                   is precisely what this route exists to avoid. */}
@@ -302,7 +307,7 @@ function Landing({ signedIn }: { signedIn: boolean }) {
             {promoted.map((entry) => (
               <li key={entry.id}>
                 <Link
-                  to={`/new/${entry.code}`}
+                  to={`/service/${entry.code}`}
                   className="cc-card block h-full p-4 transition-colors hover:border-[var(--accent)]"
                 >
                   <p className="font-medium">{entry.name}</p>
@@ -332,6 +337,9 @@ function Landing({ signedIn }: { signedIn: boolean }) {
           </p>
           <div className="mt-4 flex flex-wrap gap-3">
             <Button onClick={() => setSearch("")}>Browse all services</Button>
+            {/* Straight to the form, deliberately. A dead end is where people
+                give up, and this is not the moment to add a page explaining
+                what a general enquiry covers. */}
             <Link className="cc-btn" to="/new/GENERAL">
               Report something not listed
             </Link>
@@ -350,7 +358,7 @@ function Landing({ signedIn }: { signedIn: boolean }) {
               {items.map((entry) => (
                 <Link
                   key={entry.id}
-                  to={`/new/${entry.code}`}
+                  to={`/service/${entry.code}`}
                   className="cc-card block p-4 transition-colors hover:border-[var(--accent)]"
                 >
                   <p className="font-medium">{entry.name}</p>
@@ -373,6 +381,145 @@ function Landing({ signedIn }: { signedIn: boolean }) {
           </section>
         ))
       )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Service detail — the step before the form
+// ---------------------------------------------------------------------------
+
+/**
+ * Turn the server's elapsed-hours figure into something a person reads.
+ *
+ * The hours already account for the City's working calendar, so a target of
+ * eight business hours reads as "8 hours" on a Tuesday morning and "3 days" at
+ * five o'clock on a Friday. That is the point: the second answer is the one
+ * that stops somebody phoning on Saturday to ask where their report went.
+ */
+function expectedWithin(hours: number): string {
+  if (hours <= 1) return "within an hour";
+  if (hours < 24) return `within ${hours} hours`;
+  const days = Math.ceil(hours / 24);
+  return days === 1 ? "within a day" : `within ${days} days`;
+}
+
+/**
+ * What this service covers, who owns it, and what happens next — before the
+ * resident starts typing.
+ *
+ * The operating-cost argument, not a feature: most "where is my request"
+ * contacts a service centre handles are people who were never told what to
+ * expect. Telling them here is cheaper than answering them later.
+ */
+function ServiceDetail() {
+  const { code = "" } = useParams();
+  const catalog = useQuery({ queryKey: ["portal", "catalog"], queryFn: () => portalApi.catalog() });
+  const entry = catalog.data?.items.find((c) => c.code === code);
+
+  if (catalog.isLoading) return <Spinner />;
+  if (catalog.error) return <ErrorNote error={catalog.error} onRetry={() => void catalog.refetch()} />;
+  if (!entry) {
+    return (
+      <Empty
+        title="We could not find that service"
+        hint="It may have been renamed, or it may not be available at this time of year."
+        action={<Link className="cc-btn cc-btn-primary mt-3" to="/">Back to services</Link>}
+      />
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      <Link className="text-sm underline underline-offset-2" to="/">
+        ← All services
+      </Link>
+
+      <div>
+        {(entry.categoryPath?.length ?? 0) > 0 && (
+          <p className="text-xs uppercase tracking-wide text-ink-faint">
+            {entry.categoryPath!.join(" › ")}
+          </p>
+        )}
+        <h1 className="mt-1 text-2xl font-semibold">{entry.name}</h1>
+        {entry.description && <p className="mt-2 text-ink-muted">{entry.description}</p>}
+      </div>
+
+      <div className="cc-card space-y-4 p-5">
+        <h2 className="text-sm font-semibold uppercase tracking-wide text-ink-muted">
+          What happens next
+        </h2>
+
+        <ol className="space-y-2 text-sm">
+          <li>
+            <strong>You tell us about it.</strong>{" "}
+            {entry.requiresLocation
+              ? "We will ask where it is, so a crew can find it."
+              : "We will ask for the details we need to act on it."}
+          </li>
+          <li>
+            <strong>We confirm we have it</strong> and give you a reference number. You can check
+            on it at any time with that number — no account needed.
+          </li>
+          <li>
+            <strong>
+              {entry.department ? `${entry.department} looks at it` : "The right team looks at it"}
+            </strong>
+            {entry.expect?.firstResponseHours
+              ? `, usually ${expectedWithin(entry.expect.firstResponseHours)}.`
+              : "."}
+          </li>
+          {entry.expect?.resolutionHours ? (
+            <li>
+              <strong>We aim to have it resolved</strong>{" "}
+              {expectedWithin(entry.expect.resolutionHours)} of receiving it.
+            </li>
+          ) : null}
+        </ol>
+
+        {/*
+          Both times come from the SLA policy and working calendar staff
+          configured, recomputed on every view. Nothing here is typed into a
+          content field, so it cannot quietly contradict what the City has
+          actually committed to.
+        */}
+        {entry.expect ? (
+          <p className="text-xs text-ink-faint">
+            Times are the City's current targets and are measured in working hours, so a report
+            made outside office hours starts on the next working day.
+          </p>
+        ) : null}
+      </div>
+
+      {/*
+        The knowledge-article slot (G·1-067). Read through from the back
+        office's knowledge base rather than a copy we keep, so nothing fills it
+        until the CRM adapter lands — and an empty box helps nobody, so it is
+        absent rather than empty.
+      */}
+      {(entry.relatedArticles?.length ?? 0) > 0 && (
+        <section className="cc-card p-5" aria-labelledby="related-heading">
+          <h2 id="related-heading" className="text-sm font-semibold uppercase tracking-wide text-ink-muted">
+            Before you report this
+          </h2>
+          <ul className="mt-2 space-y-1 text-sm">
+            {entry.relatedArticles!.map((a) => (
+              <li key={a.url}>
+                <a className="underline underline-offset-2" href={a.url}>{a.title}</a>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
+      <div className="flex flex-wrap items-center gap-3">
+        <Link className="cc-btn cc-btn-primary" to={`/new/${entry.code}`}>
+          Start this report
+        </Link>
+        <Link className="text-sm underline underline-offset-2" to="/track">
+          Or check on a report you already made
+        </Link>
+      </div>
     </div>
   );
 }
@@ -485,8 +632,10 @@ function Report({ signedIn }: { signedIn: boolean }) {
 
   return (
     <div className="space-y-4">
-      <Link className="text-sm underline underline-offset-2" to="/">
-        ← All services
+      {/* Back to the service, not to the whole catalogue. Somebody who opened
+          the form to check what it asks for should land where they were. */}
+      <Link className="text-sm underline underline-offset-2" to={`/service/${entry.code}`}>
+        ← {entry.name}
       </Link>
 
       <div>

@@ -9,8 +9,8 @@ could be shown it working, not that a foundation exists.
 
 | Rating | Count | Meaning |
 |---|---|---|
-| **Have** | 18 | Working today, demonstrable |
-| **Partial** | 26 | Foundation exists, visible work needed |
+| **Have** | 19 | Working today, demonstrable |
+| **Partial** | 25 | Foundation exists, visible work needed |
 | **Missing** | 22 | Nothing in the codebase |
 | **Inverted** | 1 | G·1-049 — a design decision reverses the rating once a CRM adapter lands |
 
@@ -31,8 +31,8 @@ catalogue is now a two-level tree staff arrange, searchable by the words residen
 rather than the City's names for its own services, with publish states, seasonal dates and a
 staff-ordered shortcut row on the landing page.
 
-Moved to **Have**: G·1-010, G·1-011, G·1-012, G·1-014, G·1-016, G·1-025, G·1-033, G·1-035,
-G·1-036, G·1-048. Moved to **Partial**: G·1-013, G·1-021, G·1-055.
+Moved to **Have**: G·1-010, G·1-011, G·1-012, G·1-014, G·1-015, G·1-016, G·1-025, G·1-033,
+G·1-035, G·1-036, G·1-048. Moved to **Partial**: G·1-013, G·1-021, G·1-055.
 
 What has *not* moved is the honest headline for the response. Three blocks of work stand between
 here and a complete answer, and two of the three are what a demo is judged on:
@@ -75,8 +75,8 @@ portal* is judged (anonymous front door, discovery, location, governance). See
 | G·1-012 Search with synonyms, typo tolerance, relevance | **Have** *(CIT-17)* | `catalog.Search` ranks on name, staff-editable synonyms, category and description, with whole-word and prefix boosts and optimal-string-alignment fuzzy matching. The no-results state offers a way back and a way to reach a person rather than a dead end. |
 | G·1-013 Type-ahead suggestions | **Partial** *(CIT-17)* | Results narrow as the resident types, debounced, with the count announced to assistive technology. There is no suggestion dropdown — the ranked list *is* the suggestion. Worth deciding deliberately rather than building: a combobox is a materially harder accessibility surface than a list. |
 | G·1-014 Promoted/shortcut services | **Have** *(CIT-18)* | An ordered, staff-editable shortcut row on the landing view. `catalog.SetPromoted` replaces the whole list in one transaction, refuses anything not published and publicly visible, and archiving a service takes it off the front page in the same operation. |
-| G·1-015 Contextual service detail before submission | **Partial** | Description is surfaced in the portal; no dedicated detail step with department, expected response time, or what-to-expect copy. |
-| G·1-067 Related knowledge articles / FAQs | **Missing** | No knowledge surface. Brief recommends proxying the CRM knowledge base rather than owning a copy. |
+| G·1-015 Contextual service detail before submission | **Have** *(CIT-19)* | `/service/:code` sits between finding a service and filling in its form: category path, description, owning department by its **public** name, and a numbered "what happens next". The expected response time is **computed** from the SLA policy and business calendar on every view (`portal.Expectation`), not typed into a content field, so it stays true when staff change the policy — and it accounts for working hours, which is why the same service reads "within 8 hours" on a Tuesday morning and "within 3 days" at five on a Friday. |
+| G·1-067 Related knowledge articles / FAQs | **Missing** *(slot built, CIT-19)* | Still no knowledge surface, and deliberately so: the brief is explicit that we should proxy the CRM's articles read-through rather than keep a copy that drifts. `CatalogEntry.RelatedArticles` and the section that renders it exist and are absent-when-empty, so the adapter epic is a wiring job rather than a redesign. Rated Missing because nothing fills it — a slot is not a feature. |
 
 ## 2.3 Request Intake & Forms
 
@@ -110,7 +110,7 @@ portal* is judged (anonymous front door, discovery, location, governance). See
 | Req | Rating | Evidence / gap |
 |---|---|---|
 | G·1-033 Gated submission, no duplicate submits, data preserved | **Have** *(CIT-14)* | Server-side validation gates submission; the portal sends an `Idempotency-Key` stable for the life of one form, so a double click replays the first result rather than dispatching a second crew. A failed submission leaves the form filled in. |
-| G·1-034 Configurable confirmation with case number, next steps, expected response | **Partial** | Reference number is returned and SLA targets are computable (`catalog.ComputeTargets`). The confirmation copy itself is not configurable. |
+| G·1-034 Configurable confirmation with case number, next steps, expected response | **Partial** *(CIT-19)* | Reference number is returned, and the expected response is now surfaced to residents pre-submission from the real policy. The **confirmation copy itself is still not configurable** — that is CIT-23, and it is the half this rating turns on. |
 | G·1-035 Unique **non-sequential** reference number | **Have** *(CIT-13)* | `requests.NewReference` draws 8 symbols of Crockford base32 from `crypto/rand` — `BBY-7K4M-2QX9` — with the prefix configurable per deployment (`CC_REFERENCE_PREFIX`) and a redraw on the unique-index collision. Lookup folds O/I/L so a reference survives being read down a phone. `ccadm reissue-references` converts historical rows. |
 | G·1-037 Structured, queryable submission data | **Have** | `Request.FormData` JSON + full reporting layer over it. |
 | G·1-036 Template-driven confirmation (email, optional SMS) | **Have** *(CIT-21)* | One durable outbox, two transports. C2 for a consented citizen — in-app inbox, consent gate, their own channel preferences — and direct SMTP for a requester C2 cannot reach. Both share the same retry, backoff, duplicate collapsing and operator view. A hard bounce suppresses as `bounced` rather than being retried. SMS remains C2's, and C2's SMS carries no content by design. |

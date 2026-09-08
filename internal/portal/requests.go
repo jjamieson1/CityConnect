@@ -41,6 +41,18 @@ type CatalogEntry struct {
 	CollectionNotice string `json:"collectionNotice,omitempty"`
 	NoticeID         string `json:"noticeId,omitempty"`
 
+	// Expect is what the City has committed to for this service. Nil when no
+	// SLA policy is attached, which is honest: a page that says nothing is
+	// better than one that invents a target the City never agreed to.
+	Expect *Expectation `json:"expect,omitempty"`
+
+	// RelatedArticles is the slot for the back office's knowledge base
+	// (G·1-067). Nothing populates it yet — the brief is explicit that we
+	// should proxy the CRM's articles read-through rather than keep a copy, so
+	// it fills in with the adapter epic. The shape is here so that is a
+	// wiring job rather than a redesign of this projection.
+	RelatedArticles []KnowledgeLink `json:"relatedArticles,omitempty"`
+
 	// Promoted marks a landing-view shortcut, and PromotedOrder is the order
 	// staff put them in — only meaningful when Promoted.
 	//
@@ -50,6 +62,27 @@ type CatalogEntry struct {
 	// appear a beat after everything else.
 	Promoted      bool `json:"promoted,omitempty"`
 	PromotedOrder int  `json:"promotedOrder,omitempty"`
+}
+
+// Expectation is how long the City expects to take, in elapsed hours from now.
+//
+// Elapsed rather than business hours, and computed from *now* rather than
+// stated as a constant, because that is the question a resident is actually
+// asking. A first-response target of eight business hours is nine hours away
+// on a Tuesday morning and three days away at five o'clock on a Friday, and
+// the second answer is the one that stops them phoning on Saturday to ask.
+//
+// Derived from the SLA policy and business calendar staff configured, so it
+// stays true when they change it. Nothing here is typed into a content field.
+type Expectation struct {
+	FirstResponseHours int `json:"firstResponseHours,omitempty"`
+	ResolutionHours    int `json:"resolutionHours,omitempty"`
+}
+
+// KnowledgeLink is one related article from the back office knowledge base.
+type KnowledgeLink struct {
+	Title string `json:"title"`
+	URL   string `json:"url"`
 }
 
 // Catalog returns the services a citizen can report.
@@ -94,6 +127,43 @@ func (s *Service) Catalog(ctx context.Context, query string) ([]CatalogEntry, er
 		return names
 	}
 
+	// One computation per distinct SLA policy rather than per service. Six
+	// services sharing a policy share an answer, and ComputeTargets loads the
+	// policy and walks the calendar each time it is called.
+	now := time.Now()
+	expectations := map[string]*Expectation{}
+	expectFor := func(policyID, priority string) *Expectation {
+		if policyID == "" {
+			return nil
+		}
+		key := policyID + "|" + priority
+		if e, ok := expectations[key]; ok {
+			return e
+		}
+		expectations[key] = nil
+		targets, err := s.catalog.ComputeTargets(ctx, policyID, priority, now)
+		if err != nil {
+			// A service whose policy will not load must still be reportable.
+			// Losing the whole catalogue over a missing calendar would be a
+			// far worse failure than showing no expected time.
+			s.log.WarnContext(ctx, "could not compute a service expectation",
+				"policy", policyID, "error", err)
+			return nil
+		}
+		if targets == nil {
+			return nil
+		}
+		e := &Expectation{
+			FirstResponseHours: hoursFrom(now, targets.ResponseDueAt),
+			ResolutionHours:    hoursFrom(now, targets.DueAt),
+		}
+		if e.FirstResponseHours == 0 && e.ResolutionHours == 0 {
+			return nil
+		}
+		expectations[key] = e
+		return e
+	}
+
 	out := make([]CatalogEntry, 0, len(types))
 	for i := range types {
 		st := &types[i]
@@ -110,6 +180,7 @@ func (s *Service) Catalog(ctx context.Context, query string) ([]CatalogEntry, er
 			CategoryPath: pathFor(st.CategoryID),
 			Description:  st.Description, NeedsPlace: st.RequiresLocation,
 			Fields:   fields,
+			Expect:   expectFor(st.SLAPolicyID, st.DefaultPriority),
 			Promoted: st.Promoted, PromotedOrder: st.PromotedOrder,
 		}
 		if entry.Fields == nil {
@@ -130,6 +201,23 @@ func (s *Service) Catalog(ctx context.Context, query string) ([]CatalogEntry, er
 		out = append(out, entry)
 	}
 	return out, nil
+}
+
+// hoursFrom rounds the gap between two instants up to whole hours.
+//
+// Up, not to nearest: telling a resident ninety minutes is "one hour" invites
+// the complaint that the City missed its own published time. Rounding away from
+// the promise is the only direction that cannot make a target look broken.
+func hoursFrom(from, to time.Time) int {
+	d := to.Sub(from)
+	if d <= 0 {
+		return 0
+	}
+	hours := int(d / time.Hour)
+	if d%time.Hour > 0 {
+		hours++
+	}
+	return hours
 }
 
 // MyRequest is a citizen's view of their own request.
