@@ -26,6 +26,11 @@ const CATALOG = {
       description: "Report a pothole or damaged road surface.",
       department: "Public Works",
       requiresLocation: true,
+      collectionNotice:
+        "We collect your name and contact details only to handle this report, to confirm we " +
+        "have it, and to let you check on its progress. They are kept under the City's records " +
+        "retention schedule and are not used for anything else.",
+      noticeId: "notice-v1",
       fields: [
         { key: "size", label: "How big is it?", type: "select", required: true,
           options: ["Small", "Medium", "Large (over 1m)"] },

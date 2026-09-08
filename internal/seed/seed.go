@@ -51,6 +51,9 @@ func Run(ctx context.Context, db *gorm.DB, cfg *config.Config, log *slog.Logger)
 	if err := nestSeededCategories(ctx, db); err != nil {
 		return err
 	}
+	if err := seedCollectionNotice(ctx, db); err != nil {
+		return err
+	}
 	if err := seedTemplates(ctx, db); err != nil {
 		return err
 	}
