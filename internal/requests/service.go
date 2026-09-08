@@ -158,8 +158,25 @@ func (s *Service) Create(ctx context.Context, actor audit.Actor, in CreateInput)
 	if err != nil {
 		return nil, err
 	}
-	if !st.Active {
-		return nil, fmt.Errorf("%w: service type %q is no longer active", ErrInvalidInput, st.Code)
+	// Published and inside its dates. Not PublicVisible — this is the internal
+	// path, and a service kept off the portal is exactly the kind an agent
+	// raises on somebody's behalf.
+	//
+	// The three refusals are worded apart on purpose: an agent told only that a
+	// service is "not active" has no idea whether to publish it, wait for its
+	// season, or pick a different one.
+	if !st.LiveAt(time.Now()) {
+		switch {
+		case st.PublishState == domain.PublishDraft:
+			return nil, fmt.Errorf("%w: service type %q has not been published yet",
+				ErrInvalidInput, st.Code)
+		case st.PublishState == domain.PublishArchived:
+			return nil, fmt.Errorf("%w: service type %q has been archived",
+				ErrInvalidInput, st.Code)
+		default:
+			return nil, fmt.Errorf("%w: service type %q is not available at this time of year",
+				ErrInvalidInput, st.Code)
+		}
 	}
 
 	formData, err := catalog.ValidateFormData(st, in.FormData)

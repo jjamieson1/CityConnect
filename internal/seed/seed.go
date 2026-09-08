@@ -43,6 +43,11 @@ func Run(ctx context.Context, db *gorm.DB, cfg *config.Config, log *slog.Logger)
 	if err := seedServiceTypes(ctx, db, departments, queues, policies); err != nil {
 		return err
 	}
+	// Before anything reads the catalogue, so an upgrade never has a window in
+	// which a retired service counts as published.
+	if err := adoptPublishState(ctx, db, log); err != nil {
+		return err
+	}
 	// After the service types exist, so a fresh deployment and an upgrade both
 	// end with every service filed under a real category.
 	if err := adoptFlatCategories(ctx, db, log); err != nil {
@@ -230,7 +235,7 @@ func seedServiceTypes(ctx context.Context, db *gorm.DB, depts, queues, policies 
 			Description:  "Report a pothole or damaged road surface.",
 			DepartmentID: depts["PW"], DefaultQueueID: queues["ROADS"],
 			SLAPolicyID: policies["standard"], DefaultPriority: domain.PriorityNormal,
-			RequiresLocation: true, PublicVisible: true, Active: true, AllowsAttachments: true,
+			RequiresLocation: true, PublicVisible: true, PublishState: domain.PublishPublished, AllowsAttachments: true,
 			IntakeForm: domain.JSONMap{"fields": []domain.FormField{
 				{Key: "size", Label: "Approximate size", Type: "select",
 					Options: []string{"Small (under 30cm)", "Medium", "Large (over 1m)"}, Required: true},
@@ -244,7 +249,7 @@ func seedServiceTypes(ctx context.Context, db *gorm.DB, depts, queues, policies 
 			Description:  "Report waste, recycling or organics that was not collected.",
 			DepartmentID: depts["PW"], DefaultQueueID: queues["WASTE"],
 			SLAPolicyID: policies["standard"], DefaultPriority: domain.PriorityNormal,
-			RequiresLocation: true, PublicVisible: true, Active: true,
+			RequiresLocation: true, PublicVisible: true, PublishState: domain.PublishPublished,
 			IntakeForm: domain.JSONMap{"fields": []domain.FormField{
 				{Key: "stream", Label: "Which stream", Type: "select",
 					Options: []string{"Garbage", "Recycling", "Organics", "Yard waste"}, Required: true},
@@ -257,7 +262,7 @@ func seedServiceTypes(ctx context.Context, db *gorm.DB, depts, queues, policies 
 			Description:  "Report a suspected water main break or major leak.",
 			DepartmentID: depts["WATER"], DefaultQueueID: queues["WATER-OPS"],
 			SLAPolicyID: policies["urgent"], DefaultPriority: domain.PriorityUrgent,
-			RequiresLocation: true, PublicVisible: true, Active: true,
+			RequiresLocation: true, PublicVisible: true, PublishState: domain.PublishPublished,
 			IntakeForm: domain.JSONMap{"fields": []domain.FormField{
 				{Key: "flowing", Label: "Is water flowing onto the road?", Type: "checkbox"},
 				{Key: "pressureLoss", Label: "Have you lost water pressure?", Type: "checkbox"},
@@ -269,7 +274,7 @@ func seedServiceTypes(ctx context.Context, db *gorm.DB, depts, queues, policies 
 			Description:  "Report a noise bylaw concern.",
 			DepartmentID: depts["BYLAW"], DefaultQueueID: queues["BYLAW-GEN"],
 			SLAPolicyID: policies["standard"], DefaultPriority: domain.PriorityNormal,
-			RequiresLocation: true, PublicVisible: true, Active: true,
+			RequiresLocation: true, PublicVisible: true, PublishState: domain.PublishPublished,
 			IntakeForm: domain.JSONMap{"fields": []domain.FormField{
 				{Key: "noiseType", Label: "Type of noise", Type: "select",
 					Options: []string{"Construction", "Music or party", "Vehicle", "Animal", "Other"}, Required: true},
@@ -283,7 +288,7 @@ func seedServiceTypes(ctx context.Context, db *gorm.DB, depts, queues, policies 
 			Description:  "Report damaged or unsafe park equipment, litter or vandalism.",
 			DepartmentID: depts["PARKS"], DefaultQueueID: queues["PARKS-MAINT"],
 			SLAPolicyID: policies["routine"], DefaultPriority: domain.PriorityLow,
-			RequiresLocation: true, PublicVisible: true, Active: true,
+			RequiresLocation: true, PublicVisible: true, PublishState: domain.PublishPublished,
 			IntakeForm: domain.JSONMap{"fields": []domain.FormField{
 				{Key: "parkName", Label: "Park name", Type: "text", Required: true},
 				{Key: "issue", Label: "What needs attention?", Type: "select",
@@ -296,7 +301,7 @@ func seedServiceTypes(ctx context.Context, db *gorm.DB, depts, queues, policies 
 			Description:  "Any request that does not fit another category.",
 			DepartmentID: depts["311"], DefaultQueueID: queues["INTAKE"],
 			SLAPolicyID: policies["standard"], DefaultPriority: domain.PriorityNormal,
-			PublicVisible: true, Active: true,
+			PublicVisible: true, PublishState: domain.PublishPublished,
 		},
 	}
 

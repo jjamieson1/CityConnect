@@ -223,6 +223,10 @@ export const api = {
       body,
     }),
   deleteServiceType: (id: string) => call<void>(`/service-types/${id}`, { method: "DELETE" }),
+  // The whole list in one call, in order. A shortcut row cannot be reordered by
+  // toggling one service at a time without residents seeing a half-applied list.
+  setPromotedServices: (ids: string[]) =>
+    call<Listing<ServiceType>>("/service-types/promoted", { method: "PUT", body: { ids } }),
 
   slaPolicies: () => call<Listing<SLAPolicy>>("/sla-policies"),
   saveSLAPolicy: (body: Partial<SLAPolicy>) =>

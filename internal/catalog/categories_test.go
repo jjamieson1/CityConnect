@@ -97,7 +97,7 @@ func TestRenamingACategoryUpdatesItsServices(t *testing.T) {
 	cat := save(t, s, &domain.ServiceCategory{Name: "Roads", Active: true})
 	st, err := s.SaveServiceType(ctx, audit.JobActor("test"), &domain.ServiceType{
 		Code: "POTHOLE", Name: "Pothole repair", CategoryID: cat.ID,
-		Active: true, PublicVisible: true,
+		PublishState: domain.PublishPublished, PublicVisible: true,
 	})
 	if err != nil {
 		t.Fatalf("save service: %v", err)
@@ -129,8 +129,8 @@ func TestServiceCategoryNameComesFromTheCategoryNotTheCaller(t *testing.T) {
 
 	st, err := s.SaveServiceType(ctx, audit.JobActor("test"), &domain.ServiceType{
 		Code: "BINS", Name: "Missed collection", CategoryID: cat.ID,
-		Category: "Something else entirely",
-		Active:   true, PublicVisible: true,
+		Category:     "Something else entirely",
+		PublishState: domain.PublishPublished, PublicVisible: true,
 	})
 	if err != nil {
 		t.Fatalf("save: %v", err)
@@ -159,7 +159,7 @@ func TestDeletingACategoryInUseIsRefused(t *testing.T) {
 	cat := save(t, s, &domain.ServiceCategory{Name: "Roads", Active: true})
 	if _, err := s.SaveServiceType(ctx, audit.JobActor("test"), &domain.ServiceType{
 		Code: "POTHOLE", Name: "Pothole repair", CategoryID: cat.ID,
-		Active: true, PublicVisible: true,
+		PublishState: domain.PublishPublished, PublicVisible: true,
 	}); err != nil {
 		t.Fatalf("save service: %v", err)
 	}
@@ -223,7 +223,7 @@ func TestUncategorisedServiceIsAllowed(t *testing.T) {
 	s, _ := newCategoryEnv(t)
 
 	st, err := s.SaveServiceType(context.Background(), audit.JobActor("test"), &domain.ServiceType{
-		Code: "GENERAL", Name: "General enquiry", Active: true, PublicVisible: true,
+		Code: "GENERAL", Name: "General enquiry", PublishState: domain.PublishPublished, PublicVisible: true,
 	})
 	if err != nil {
 		t.Fatalf("an uncategorised service was refused: %v", err)

@@ -4,7 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api } from "@/lib/api";
 import { useAuth } from "@/hooks/useAuth";
-import type { Role, RoutingRule } from "@/lib/types";
+import type { Role, RoutingRule, ServiceType } from "@/lib/types";
 import {
   Badge, Button, Card, cx, Empty, ErrorNote, Field, formatDateTime, Input, Modal, relativeTime,
   Select, Spinner, Textarea,
@@ -246,9 +246,10 @@ function Services() {
   });
 
   return (
+    <div className="space-y-4">
     <Card
       title="Service catalogue"
-      actions={can("config:write") && <Button onClick={() => setEditing({ active: true, publicVisible: true, defaultPriority: "normal" })}>Add</Button>}
+      actions={can("config:write") && <Button onClick={() => setEditing({ publishState: "draft", publicVisible: true, defaultPriority: "normal" })}>Add</Button>}
     >
       {list.isLoading ? <Spinner /> : (
         <table className="cc-table">
@@ -265,7 +266,7 @@ function Services() {
                 <td className="text-ink-muted">{st.category ?? "—"}</td>
                 <td className="text-ink-muted">{st.department?.name ?? "—"}</td>
                 <td className="text-ink-muted">{st.slaPolicy?.name ?? "None"}</td>
-                <td>{st.active ? <Badge tone="good">Active</Badge> : <Badge>Retired</Badge>}</td>
+                <td><PublishBadge st={st} /></td>
                 <td className="text-right">
                   {can("config:write") && (
                     <Button size="sm" onClick={() => setEditing(st as unknown as Record<string, unknown>)}>Edit</Button>
@@ -308,11 +309,148 @@ function Services() {
               },
               { key: "requiresLocation", label: "Requires a location", type: "checkbox" },
               { key: "publicVisible", label: "Visible to citizens", type: "checkbox" },
-              { key: "active", label: "Active", type: "checkbox" },
+              {
+                key: "publishState", label: "Publish state", type: "select", required: true,
+                hint: "Drafts are invisible to residents. Archived keeps old requests readable.",
+                options: [
+                  { value: "draft", label: "Draft" },
+                  { value: "published", label: "Published" },
+                  { value: "archived", label: "Archived" },
+                ],
+              },
+              {
+                key: "effectiveStart", label: "Available from", type: "date",
+                hint: "Leave blank for a service that runs all year.",
+              },
+              {
+                key: "effectiveEnd", label: "Available until", type: "date",
+                hint: "The last day it can be requested.",
+              },
             ]}
           />
         )}
       </Modal>
+    </Card>
+
+    <PromotedServices services={list.data?.items ?? []} />
+    </div>
+  );
+}
+
+/**
+ * Three states and a season, in one column. "Active"/"Retired" could not say
+ * that a service is written but not live, or live but out of season, and an
+ * operator who cannot see why a service is missing from the portal goes looking
+ * in the code.
+ */
+function PublishBadge({ st }: { st: ServiceType }) {
+  if (st.publishState === "draft") return <Badge tone="warning">Draft</Badge>;
+  if (st.publishState === "archived") return <Badge>Archived</Badge>;
+
+  const now = Date.now();
+  if (st.effectiveStart && new Date(st.effectiveStart).getTime() > now) {
+    return <Badge tone="warning">Starts {formatDate(st.effectiveStart)}</Badge>;
+  }
+  if (st.effectiveEnd && new Date(st.effectiveEnd).getTime() <= now) {
+    return <Badge tone="warning">Ended {formatDate(st.effectiveEnd, true)}</Badge>;
+  }
+  if (st.effectiveEnd) {
+    return <Badge tone="good">Live until {formatDate(st.effectiveEnd, true)}</Badge>;
+  }
+  return <Badge tone="good">Published</Badge>;
+}
+
+function formatDate(iso: string, exclusive = false): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  if (exclusive) d.setTime(d.getTime() - 1);
+  return d.toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
+}
+
+/**
+ * The portal's landing-view shortcuts.
+ *
+ * Move buttons rather than drag: a drag handle alone is unusable by keyboard
+ * (WCAG 2.5.7), and building both a drag surface and a keyboard path is two
+ * implementations of the same feature. Buttons are the one that works for
+ * everybody.
+ */
+function PromotedServices({ services }: { services: ServiceType[] }) {
+  const queryClient = useQueryClient();
+  const { can } = useAuth();
+
+  const promoted = services
+    .filter((st) => st.promoted)
+    .sort((a, b) => (a.promotedOrder ?? 0) - (b.promotedOrder ?? 0));
+
+  // Only what SetPromoted would accept, so the console never offers a choice
+  // the server will refuse.
+  const eligible = services.filter(
+    (st) => st.publishState === "published" && st.publicVisible && !st.promoted,
+  );
+
+  const save = useMutation({
+    mutationFn: (ids: string[]) => api.setPromotedServices(ids),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["service-types"] }),
+  });
+
+  const ids = promoted.map((st) => st.id);
+  const commit = (next: string[]) => save.mutate(next);
+  const move = (from: number, to: number) => {
+    if (to < 0 || to >= ids.length) return;
+    const next = [...ids];
+    [next[from], next[to]] = [next[to], next[from]];
+    commit(next);
+  };
+
+  return (
+    <Card title="Promoted on the portal">
+      <p className="mb-3 text-sm text-ink-muted">
+        Shortcuts on the portal's landing page, in this order. A city knows the three or four
+        things it is asked for most; making a resident search for them helps nobody.
+      </p>
+      {save.error ? <ErrorNote error={save.error} /> : null}
+
+      {promoted.length === 0 ? (
+        <Empty title="Nothing is promoted" hint="Residents see the full catalogue only." />
+      ) : (
+        <ol className="space-y-2">
+          {promoted.map((st, i) => (
+            <li key={st.id} className="flex items-center gap-2 text-sm">
+              <span className="w-5 text-right text-ink-faint">{i + 1}.</span>
+              <span className="flex-1">{st.name}</span>
+              {can("config:write") && (
+                <>
+                  <Button size="sm" disabled={i === 0 || save.isPending}
+                    aria-label={`Move ${st.name} up`} onClick={() => move(i, i - 1)}>↑</Button>
+                  <Button size="sm" disabled={i === ids.length - 1 || save.isPending}
+                    aria-label={`Move ${st.name} down`} onClick={() => move(i, i + 1)}>↓</Button>
+                  <Button size="sm" disabled={save.isPending}
+                    aria-label={`Remove ${st.name} from the landing page`}
+                    onClick={() => commit(ids.filter((id) => id !== st.id))}>Remove</Button>
+                </>
+              )}
+            </li>
+          ))}
+        </ol>
+      )}
+
+      {can("config:write") && eligible.length > 0 && (
+        <div className="mt-4 max-w-sm">
+          <Field label="Add a shortcut">
+            <Select
+              value=""
+              disabled={save.isPending}
+              onChange={(e) => e.target.value && commit([...ids, e.target.value])}
+            >
+              <option value="">Choose a service…</option>
+              {eligible.map((st) => (
+                <option key={st.id} value={st.id}>{st.name}</option>
+              ))}
+            </Select>
+          </Field>
+        </div>
+      )}
     </Card>
   );
 }
@@ -883,8 +1021,51 @@ interface FormFieldSpec {
   key: string;
   label: string;
   hint?: string;
-  type?: "text" | "textarea" | "checkbox" | "select";
+  type?: "text" | "textarea" | "checkbox" | "select" | "date";
   options?: { value: string; label: string }[];
+  /**
+   * Drops the blank "None" option. A select whose empty value is meaningless —
+   * publish state, say — should not offer it, because picking it looks like a
+   * choice and behaves like a default.
+   */
+  required?: boolean;
+}
+
+/**
+ * The server stores availability dates as instants; an operator thinks in days.
+ * These convert between the two in the operator's own time zone, so "April 1"
+ * means midnight where they are rather than midnight in UTC — which for a
+ * Pacific city would start the service at five in the afternoon of March 31.
+ */
+function dateInputValue(iso: unknown, exclusive = false): string {
+  if (typeof iso !== "string" || iso === "") return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  // An exclusive bound is stored as the first instant *after* the last day it
+  // covers, so step back inside the window before reading the date off it.
+  // Stepping back a millisecond rather than a whole day is right for both the
+  // midnight this console writes and an arbitrary instant set through the API.
+  if (exclusive) d.setTime(d.getTime() - 1);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+function startOfLocalDay(value: string): string | null {
+  if (!value) return null;
+  const [y, m, d] = value.split("-").map(Number);
+  return new Date(y, m - 1, d, 0, 0, 0, 0).toISOString();
+}
+
+/**
+ * The closing date is inclusive to the operator and exclusive to the server, so
+ * "available until September 30" is stored as the first instant of October 1.
+ * Storing the start of the 30th instead would withdraw the service a day early,
+ * which is the kind of off-by-one nobody notices until a resident complains.
+ */
+function endOfLocalDay(value: string): string | null {
+  if (!value) return null;
+  const [y, m, d] = value.split("-").map(Number);
+  return new Date(y, m - 1, d + 1, 0, 0, 0, 0).toISOString();
 }
 
 function RecordForm({ value, fields, onSave, onCancel, pending, error }: {
@@ -919,11 +1100,26 @@ function RecordForm({ value, fields, onSave, onCancel, pending, error }: {
             return (
               <Field key={f.key} label={f.label} hint={f.hint}>
                 <Select value={String(form[f.key] ?? "")} onChange={(e) => set(f.key, e.target.value)}>
-                  <option value="">None</option>
+                  {!f.required && <option value="">None</option>}
                   {(f.options ?? []).map((o) => (
                     <option key={o.value} value={o.value}>{o.label}</option>
                   ))}
                 </Select>
+              </Field>
+            );
+          }
+          if (f.type === "date") {
+            return (
+              <Field key={f.key} label={f.label} hint={f.hint}>
+                <Input
+                  type="date"
+                  value={dateInputValue(form[f.key], f.key === "effectiveEnd")}
+                  onChange={(e) =>
+                    set(f.key, f.key === "effectiveEnd"
+                      ? endOfLocalDay(e.target.value)
+                      : startOfLocalDay(e.target.value))
+                  }
+                />
               </Field>
             );
           }

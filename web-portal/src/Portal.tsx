@@ -196,6 +196,17 @@ function Landing({ signedIn }: { signedIn: boolean }) {
 
   const items = catalog.data?.items ?? [];
 
+  // The shortcuts staff put on the front page, in their order. Hidden while
+  // searching: somebody who has typed something is looking for one service, and
+  // a row of unrelated shortcuts above their results is in the way.
+  const promoted = useMemo(
+    () =>
+      items
+        .filter((e) => e.promoted)
+        .sort((a, b) => (a.promotedOrder ?? 0) - (b.promotedOrder ?? 0)),
+    [items],
+  );
+
   // Grouped by category when browsing, because a resident scans for the area of
   // life their problem belongs to. Not when searching: the server has ranked
   // the results and regrouping them would throw that ranking away.
@@ -275,6 +286,35 @@ function Landing({ signedIn }: { signedIn: boolean }) {
             : ""}
         </p>
       </div>
+
+      {/*
+        Promoted services also appear under their category below, on purpose.
+        A shortcut is a fast path, not a move: pulling "Potholes" out of
+        "Roads & transport" would leave a resident who browses to that category
+        unable to find it.
+      */}
+      {!searching && promoted.length > 0 && (
+        <section aria-labelledby="promoted-heading">
+          <h2 id="promoted-heading" className="mb-2 text-sm font-semibold uppercase tracking-wide text-ink-muted">
+            Most requested
+          </h2>
+          <ul className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {promoted.map((entry) => (
+              <li key={entry.id}>
+                <Link
+                  to={`/new/${entry.code}`}
+                  className="cc-card block h-full p-4 transition-colors hover:border-[var(--accent)]"
+                >
+                  <p className="font-medium">{entry.name}</p>
+                  {entry.description && (
+                    <p className="mt-1 text-sm text-ink-muted">{entry.description}</p>
+                  )}
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       {catalog.isLoading ? (
         <Spinner />

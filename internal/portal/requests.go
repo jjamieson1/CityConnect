@@ -40,6 +40,16 @@ type CatalogEntry struct {
 	// than whatever happened to be current when they pressed the button.
 	CollectionNotice string `json:"collectionNotice,omitempty"`
 	NoticeID         string `json:"noticeId,omitempty"`
+
+	// Promoted marks a landing-view shortcut, and PromotedOrder is the order
+	// staff put them in — only meaningful when Promoted.
+	//
+	// Carried on the entry rather than served from a second endpoint. The
+	// shortcut row and the full catalogue are one page and would otherwise be
+	// two requests that can disagree, with the resident watching the shortcuts
+	// appear a beat after everything else.
+	Promoted      bool `json:"promoted,omitempty"`
+	PromotedOrder int  `json:"promotedOrder,omitempty"`
 }
 
 // Catalog returns the services a citizen can report.
@@ -99,7 +109,8 @@ func (s *Service) Catalog(ctx context.Context, query string) ([]CatalogEntry, er
 			ID: st.ID, Code: st.Code, Name: st.Name, Category: st.Category,
 			CategoryPath: pathFor(st.CategoryID),
 			Description:  st.Description, NeedsPlace: st.RequiresLocation,
-			Fields: fields,
+			Fields:   fields,
+			Promoted: st.Promoted, PromotedOrder: st.PromotedOrder,
 		}
 		if entry.Fields == nil {
 			entry.Fields = []domain.FormField{}
@@ -507,7 +518,11 @@ func (s *Service) reportableService(ctx context.Context, serviceTypeID string) (
 	if err != nil {
 		return nil, fmt.Errorf("%w: unknown service", ErrInvalidInput)
 	}
-	if !st.Active || !st.PublicVisible {
+	// One test, and the same one the catalogue listing applies. A service that
+	// is drafted, archived, out of season or staff-only is refused in the same
+	// words: a public endpoint that explains *why* a service id it will not
+	// accept is unacceptable has told an enumerator which ids are real.
+	if !st.OfferedToPublicAt(time.Now()) {
 		return nil, fmt.Errorf("%w: that service is not available online", ErrInvalidInput)
 	}
 	return st, nil
