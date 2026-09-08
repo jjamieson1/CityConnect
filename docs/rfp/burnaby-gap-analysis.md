@@ -1,6 +1,6 @@
 # Burnaby RFP #177-08-26 — Requirement Gap Analysis
 
-**Assessed:** 2026-09-02 · **Against:** CityConnect `main` (branch `mcp-connection`)
+**Assessed:** 2026-09-02 · **Re-rated:** 2026-09-08 · **Against:** CityConnect `main`
 **Source:** `docs/Service_Request_Portal_Build_Brief.docx.md` (distilled from Appendix G — Functional Requirements)
 
 Every requirement ID in the brief is rated against what is actually in the repository today, with the
@@ -9,19 +9,41 @@ could be shown it working, not that a foundation exists.
 
 | Rating | Count | Meaning |
 |---|---|---|
-| **Have** | 17 | Working today, demonstrable |
-| **Partial** | 25 | Foundation exists, visible work needed |
-| **Missing** | 25 | Nothing in the codebase |
+| **Have** | 18 | Working today, demonstrable |
+| **Partial** | 26 | Foundation exists, visible work needed |
+| **Missing** | 22 | Nothing in the codebase |
+| **Inverted** | 1 | G·1-049 — a design decision reverses the rating once a CRM adapter lands |
 
-**Re-rated 2026-09-07**, after Sprint 1. Six requirements moved, and the movement is concentrated in
-exactly the area this analysis called the weakness — the public front door. What was "a resident
-cannot report a pothole without a C2 account" is now three working submission paths, a scanned photo
-upload, and a tracking loop that the people it was built for can actually reach.
+Counts are read off the tables below rather than kept by hand. The 2026-09-07 summary said 17 / 25 /
+25 while its own rows said 14 / 25 / 27; a number in a bid document that disagrees with the evidence
+under it is worse than no number.
 
-Still true, and still the thing an evaluator will find first: **there is no catalogue search**
-(G·1-012). A resident who cannot find the service never reaches any of the above.
+**Re-rated 2026-09-08**, at the close of Sprint 1. Ten requirements have moved since the first
+assessment, and the movement is concentrated in exactly the two areas this analysis called the
+weakness.
 
-Moved: G·1-016, G·1-025, G·1-033, G·1-035, G·1-036, G·1-048 → **Have**; G·1-021 → **Partial**.
+The **public front door**: what was "a resident cannot report a pothole without a C2 account" is now
+three working submission paths, a scanned photo upload, a versioned collection notice recorded per
+submission, and a tracking loop the people it was built for can actually reach.
+
+**Discovery**, which the 2026-09-07 pass still named as the thing an evaluator would find first: the
+catalogue is now a two-level tree staff arrange, searchable by the words residents actually use
+rather than the City's names for its own services, with publish states, seasonal dates and a
+staff-ordered shortcut row on the landing page.
+
+Moved to **Have**: G·1-010, G·1-011, G·1-012, G·1-014, G·1-016, G·1-025, G·1-033, G·1-035,
+G·1-036, G·1-048. Moved to **Partial**: G·1-013, G·1-021, G·1-055.
+
+What has *not* moved is the honest headline for the response. Three blocks of work stand between
+here and a complete answer, and two of the three are what a demo is judged on:
+
+- **The form builder** — §2.3, and G·1-052/053 behind it. An intake form is still edited as raw
+  JSON, which is not a surface a business user can be shown.
+- **Location services** — §2.4, G·1-027 to G·1-032. Nothing at all: no GIS, no map, no boundary
+  check. The columns are ready and the capture is not.
+- **Configuration governance** — §2.7, G·1-055 to G·1-057. CIT-18 built the publish *state*;
+  the review-and-approve workflow that moves it, the version history and the promotion path
+  between environments are all still to come.
 
 The shape of that result is the strategy: CityConnect is strong exactly where a CRM is hard
 (workload, SLA, audit, routing, notification durability) and absent exactly where a *public intake
@@ -48,11 +70,11 @@ portal* is judged (anonymous front door, discovery, location, governance). See
 
 | Req | Rating | Evidence / gap |
 |---|---|---|
-| G·1-010 Central configurable catalogue | **Partial** | `domain.ServiceType` carries code, name, category, description, department, routing default (`DefaultQueueID`), mapped form (`IntakeForm`), `Active`/`PublicVisible`. **Missing: synonyms, publish state (DRAFT/PUBLISHED/ARCHIVED), effective start/end dates.** |
-| G·1-011 2+ level category hierarchy | **Missing** | `ServiceType.Category` is a flat `varchar(80)` string. No `service_category` table, no parent/child, no ordering. |
-| G·1-012 Search with synonyms, typo tolerance, relevance | **Missing** | `catalog.ListServiceTypes` filters only; `portal.Catalog` returns the whole list. No search of any kind. |
-| G·1-013 Type-ahead suggestions | **Missing** | — |
-| G·1-014 Promoted/shortcut services | **Missing** | — |
+| G·1-010 Central configurable catalogue | **Have** *(CIT-17, CIT-18)* | `domain.ServiceType` carries code, name, category, description, department, routing default, mapped form, `Synonyms`, and `PublishState` (draft · published · archived) with `EffectiveStart`/`EffectiveEnd`. `catalog.ListServiceTypes` applies publish state and the date window in one query, so a seasonal service cannot be live on one surface and not another. |
+| G·1-011 2+ level category hierarchy | **Have** *(CIT-16)* | `domain.ServiceCategory` is a parented, ordered tree (`catalog/categories.go`, depth capped at 3). Existing flat category names are adopted on boot rather than discarded (`seed.adoptFlatCategories`), and the portal groups by the top of the path. |
+| G·1-012 Search with synonyms, typo tolerance, relevance | **Have** *(CIT-17)* | `catalog.Search` ranks on name, staff-editable synonyms, category and description, with whole-word and prefix boosts and optimal-string-alignment fuzzy matching. The no-results state offers a way back and a way to reach a person rather than a dead end. |
+| G·1-013 Type-ahead suggestions | **Partial** *(CIT-17)* | Results narrow as the resident types, debounced, with the count announced to assistive technology. There is no suggestion dropdown — the ranked list *is* the suggestion. Worth deciding deliberately rather than building: a combobox is a materially harder accessibility surface than a list. |
+| G·1-014 Promoted/shortcut services | **Have** *(CIT-18)* | An ordered, staff-editable shortcut row on the landing view. `catalog.SetPromoted` replaces the whole list in one transaction, refuses anything not published and publicly visible, and archiving a service takes it off the front page in the same operation. |
 | G·1-015 Contextual service detail before submission | **Partial** | Description is surfaced in the portal; no dedicated detail step with department, expected response time, or what-to-expect copy. |
 | G·1-067 Related knowledge articles / FAQs | **Missing** | No knowledge surface. Brief recommends proxying the CRM knowledge base rather than owning a copy. |
 
@@ -65,7 +87,7 @@ portal* is judged (anonymous front door, discovery, location, governance). See
 | G·1-018 Configurable forms per service | **Have** | `ServiceType.IntakeForm` → `domain.FormField` (key, label, type, required, options, help, pattern, min, max), rendered by `PortalField` and validated server-side via `catalog.ParseForm`. |
 | G·1-019 Scoped launch set, engine scalable | **Have** | Adding a service adds no code. |
 | G·1-020 Form opens without losing page context | **Partial** | `Report` is a route, not a dialog. No focus trap, no keyboard dismissal, no return-focus. |
-| G·1-021 Configurable contact fields + PI collection notice | **Partial** *(CIT-12)* | The guest form collects name, email and phone and carries a collection notice at the point of collection. The notice wording is hardcoded and the fields are not yet configurable per service — CIT-15 makes both configurable. |
+| G·1-021 Configurable contact fields + PI collection notice | **Partial** *(CIT-12, CIT-15)* | The notice is now configuration a municipality owns, versioned rather than edited, with the exact wording shown recorded against each submission (`domain.CollectionNotice`, `domain.RequestNotice`). The **contact fields** are still fixed — that half arrives with the form builder (CIT-25). |
 | G·1-022 Client+server validation, accessible field errors | **Partial** | Server-side validation is real. Client-side errors exist but field-level `aria-describedby`/`aria-invalid` association is unverified. |
 | G·1-023 Conditional fields/sections | **Missing** | `FormField` has no `conditionalOn` / show-when rule. |
 | G·1-024 Max length + profanity filtering | **Partial** | `pattern`, `min`, `max` supported. No profanity filter. |
@@ -110,7 +132,7 @@ portal* is judged (anonymous front door, discovery, location, governance). See
 | G·1-052 Non-technical staff maintain the catalogue | **Partial** | `/api/service-types` CRUD + `web/src/pages/Admin.tsx`. The intake form is edited as raw JSON — that is not a non-technical surface. |
 | G·1-053 Maintain forms, messages, routing, workflow settings | **Partial** | Strong here: `RuleEditor.tsx` + `/api/routing-rules/simulate`, notification templates, SLA policies, business calendars, macros. Form building is the weak link; workflow states are fixed in code. |
 | G·1-054 Role-based admin permissions (admin / business user / IT support) | **Partial** | Roles are `readonly \| agent \| supervisor \| admin` (`domain/org.go`). Burnaby's three personas do not map cleanly; no IT-support persona. |
-| G·1-055 Draft → review → approval → publish governance | **Missing** | Configuration saves take effect immediately. Only an `Active` boolean. |
+| G·1-055 Draft → review → approval → publish governance | **Partial** *(CIT-18)* | The catalogue now has real publish states — draft, published, archived, plus effective dates — and a new service is created as a **draft** rather than live. What is missing is the workflow that moves between them: no review step, no approver, no separation between the person who edits and the person who publishes. The state field exists so that workflow has something to move. |
 | G·1-056 Versioning, approval history, audit trail | **Partial** | The **audit trail is a genuine strength** — `internal/audit` is a hash-chained, append-only log with `/api/audit/verify`. But there is no config versioning, no previous-value snapshot for rollback, no approval history. |
 | G·1-057 Controlled promotion across environments | **Missing** | — |
 
@@ -129,7 +151,7 @@ portal* is judged (anonymous front door, discovery, location, governance). See
 
 | Req | Rating | Evidence / gap |
 |---|---|---|
-| G·1-046 Monitoring/alerting across portal and integrations | **Partial** | `/healthz`, notification outbox `Stats` with stuck-queue detection, webhook delivery log, `cmd/security-dashboard`. No alerting, and **no CI at all — `.github/workflows/` does not exist.** |
+| G·1-046 Monitoring/alerting across portal and integrations | **Partial** *(CIT-41)* | `/healthz`, notification outbox `Stats` with stuck-queue detection, webhook delivery log, `cmd/security-dashboard`. CI now runs build, vet, test, lint and a production build for both SPAs, an axe pass over the citizen portal, and the pinned security scanners, failing on any gating check that did not pass — including one recorded as skipped because its tool was absent. Still no runtime **alerting**: a scan tells us about the build, not about production at 3am. |
 | G·1-066 Outage/maintenance messaging with alternate channels | **Missing** | — |
 
 ## 2.10 Future Expansion

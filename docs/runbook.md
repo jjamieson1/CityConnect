@@ -288,6 +288,28 @@ a person.
 **Run exactly one instance with `CC_JOBS_ENABLED=true`.** Two schedulers against
 one database will double-send citizen notifications.
 
+**A new service is created as a draft, and stays invisible until published.**
+Admin → Service catalogue → the service → *Publish state*. This surprises people
+who added a service and went looking for it in the portal. It is the intended
+behaviour: the alternative is a half-configured service appearing to residents
+the moment somebody presses Save. The state badge in the catalogue list says
+which of draft, published, archived or out-of-season a service is in, so the
+answer to "why can't residents see it" is on the screen rather than in the logs.
+
+**Seasonal dates are read in the browser's time zone.** *Available from* and
+*Available until* are stored as instants and entered as days, converted using
+the clock of whoever typed them. Set them from a machine in the municipality's
+own time zone; setting them from elsewhere shifts the window by the difference.
+*Available until* is inclusive — a service set to end on September 30 can be
+requested all day on September 30.
+
+**Upgrading from a version before publish states:** the first boot converts the
+old `active` flag automatically — a service that was switched off comes back
+**archived**, not published. Nothing needs to be run by hand. The conversion
+logs `adopted publish state from the legacy active flag` with a count; if that
+count is higher than the number of services the City had retired, stop and check
+before letting residents onto the portal.
+
 **Watch these four numbers:** overdue outbox messages, dead-lettered webhooks,
 open-and-breached requests, and the audit verification result. All four are on
 Admin → Operations and Admin → Delivery log.
