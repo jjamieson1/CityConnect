@@ -31,6 +31,9 @@ export interface CatalogEntry {
   department?: string;
   requiresLocation: boolean;
   fields: FormField[];
+  /** A shortcut on the landing view, and where staff put it in the row. */
+  promoted?: boolean;
+  promotedOrder?: number;
 }
 
 export interface MyUpdate {

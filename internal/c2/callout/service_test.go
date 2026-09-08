@@ -44,20 +44,20 @@ func testService(t *testing.T) *Service {
 }
 
 // seedServiceType puts one bookable service in the catalogue.
-func seedServiceType(t *testing.T, s *Service, code, name string, active, public bool) {
+func seedServiceType(t *testing.T, s *Service, code, name string, state domain.PublishState, public bool) {
 	t.Helper()
 	st := &domain.ServiceType{
 		Code: code, Name: name, Description: name + " description.",
-		Active: active, PublicVisible: public, DefaultPriority: "normal",
+		PublishState: state, PublicVisible: public, DefaultPriority: "normal",
 	}
 	if err := s.db.Create(st).Error; err != nil {
 		t.Fatalf("seed service type %s: %v", code, err)
 	}
-	// Active and PublicVisible are `default:true` columns, so GORM omits them
-	// on insert when they are false and the database fills in true. Writing
-	// them explicitly is the only way to seed a retired or hidden service.
+	// PublicVisible is a `default:true` column, so GORM omits it on insert when
+	// it is false and the database fills in true. Writing it explicitly is the
+	// only way to seed a service hidden from citizens.
 	if err := s.db.Model(st).Updates(map[string]any{
-		"active": active, "public_visible": public,
+		"publish_state": state, "public_visible": public,
 	}).Error; err != nil {
 		t.Fatalf("set flags on %s: %v", code, err)
 	}
@@ -154,8 +154,8 @@ func TestEmptyBundleStillLinksToThePortal(t *testing.T) {
 // two named services, then the whole catalogue.
 func TestQuickLinksOfferNamedServicesAndTheCatalogue(t *testing.T) {
 	s := testService(t)
-	seedServiceType(t, s, "GENERAL", "General enquiry", true, true)
-	seedServiceType(t, s, "MISSED-COLLECTION", "Missed waste collection", true, true)
+	seedServiceType(t, s, "GENERAL", "General enquiry", domain.PublishPublished, true)
+	seedServiceType(t, s, "MISSED-COLLECTION", "Missed waste collection", domain.PublishPublished, true)
 
 	b := s.render(context.Background(), &domain.Contact{Base: domain.Base{ID: "c1"}}, nil)
 	tasks := byName(b.Tasks)
@@ -188,7 +188,7 @@ func TestQuickLinksOfferNamedServicesAndTheCatalogue(t *testing.T) {
 // service in the console follows through to every citizen's card.
 func TestQuickLinkNamesFollowTheCatalogue(t *testing.T) {
 	s := testService(t)
-	seedServiceType(t, s, "GENERAL", "Ask the City a question", true, true)
+	seedServiceType(t, s, "GENERAL", "Ask the City a question", domain.PublishPublished, true)
 
 	b := s.render(context.Background(), &domain.Contact{Base: domain.Base{ID: "c1"}}, nil)
 
@@ -205,17 +205,19 @@ func TestQuickLinkNamesFollowTheCatalogue(t *testing.T) {
 // test the portal applies before accepting a report is the one applied here.
 func TestQuickLinksSkipWhatTheCitizenCannotSubmit(t *testing.T) {
 	cases := []struct {
-		name           string
-		active, public bool
+		name   string
+		state  domain.PublishState
+		public bool
 	}{
-		{"retired", false, true},
-		{"hidden from the public", true, false},
-		{"both", false, false},
+		{"still a draft", domain.PublishDraft, true},
+		{"archived", domain.PublishArchived, true},
+		{"hidden from the public", domain.PublishPublished, false},
+		{"archived and hidden", domain.PublishArchived, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			s := testService(t)
-			seedServiceType(t, s, "GENERAL", "General enquiry", tc.active, tc.public)
+			seedServiceType(t, s, "GENERAL", "General enquiry", tc.state, tc.public)
 			// MISSED-COLLECTION is never seeded here: an unknown code must be
 			// skipped just as firmly as an unusable one.
 
@@ -238,8 +240,8 @@ func TestQuickLinksSkipWhatTheCitizenCannotSubmit(t *testing.T) {
 // take the remainder and never more than half.
 func TestOpenRequestsKeepAtLeastHalfTheCard(t *testing.T) {
 	s := testService(t)
-	seedServiceType(t, s, "GENERAL", "General enquiry", true, true)
-	seedServiceType(t, s, "MISSED-COLLECTION", "Missed waste collection", true, true)
+	seedServiceType(t, s, "GENERAL", "General enquiry", domain.PublishPublished, true)
+	seedServiceType(t, s, "MISSED-COLLECTION", "Missed waste collection", domain.PublishPublished, true)
 
 	now := time.Now()
 	var open []domain.Request

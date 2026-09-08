@@ -19,7 +19,7 @@ func TestSaveWritesFalseOnDefaultTrueColumns(t *testing.T) {
 
 	st := &domain.ServiceType{
 		Code: "DRAFT", Name: "Not launched yet", DefaultPriority: "normal",
-		Active: false, PublicVisible: false, AllowsAttachments: false,
+		PublicVisible: false, AllowsAttachments: false,
 	}
 	if err := Save(db, st, st.ID); err != nil {
 		t.Fatalf("save: %v", err)
@@ -35,9 +35,9 @@ func TestSaveWritesFalseOnDefaultTrueColumns(t *testing.T) {
 	if err := db.First(&got, "id = ?", st.ID).Error; err != nil {
 		t.Fatalf("reload by id %q: %v", st.ID, err)
 	}
-	if got.Active || got.PublicVisible || got.AllowsAttachments {
-		t.Errorf("stored active=%v public=%v attachments=%v, want all false",
-			got.Active, got.PublicVisible, got.AllowsAttachments)
+	if got.PublicVisible || got.AllowsAttachments {
+		t.Errorf("stored public=%v attachments=%v, want both false",
+			got.PublicVisible, got.AllowsAttachments)
 	}
 	if got.ID == "" {
 		t.Error("the primary key was not assigned")
@@ -51,7 +51,7 @@ func TestSaveKeepsOrdinaryValues(t *testing.T) {
 	st := &domain.ServiceType{
 		Code: "POTHOLE", Name: "Pothole repair", Category: "Roads",
 		Description: "A hole in the road.", DefaultPriority: "high",
-		Active: true, PublicVisible: true, RequiresLocation: true,
+		PublicVisible: true, RequiresLocation: true,
 	}
 	if err := Save(db, st, st.ID); err != nil {
 		t.Fatalf("save: %v", err)
@@ -61,7 +61,7 @@ func TestSaveKeepsOrdinaryValues(t *testing.T) {
 	if err := db.First(&got, "id = ?", st.ID).Error; err != nil {
 		t.Fatalf("reload by id %q: %v", st.ID, err)
 	}
-	if !got.Active || !got.PublicVisible || !got.RequiresLocation {
+	if !got.PublicVisible || !got.RequiresLocation {
 		t.Error("a true flag was lost")
 	}
 	if got.Name != "Pothole repair" || got.Category != "Roads" || got.DefaultPriority != "high" {
@@ -78,12 +78,12 @@ func TestSaveUpdatesExistingRecords(t *testing.T) {
 	db := storetest.New(t)
 
 	st := &domain.ServiceType{Code: "NOISE", Name: "Noise complaint",
-		DefaultPriority: "normal", Active: true, PublicVisible: true}
+		DefaultPriority: "normal", PublicVisible: true}
 	if err := Save(db, st, st.ID); err != nil {
 		t.Fatalf("create: %v", err)
 	}
 
-	st.Active = false
+	st.PublicVisible = false
 	st.Name = "Noise complaint (retired)"
 	if err := Save(db, st, st.ID); err != nil {
 		t.Fatalf("update: %v", err)
@@ -93,8 +93,8 @@ func TestSaveUpdatesExistingRecords(t *testing.T) {
 	if err := db.First(&got, "id = ?", st.ID).Error; err != nil {
 		t.Fatalf("reload by id %q: %v", st.ID, err)
 	}
-	if got.Active {
-		t.Error("deactivating an existing service type did not persist")
+	if got.PublicVisible {
+		t.Error("hiding an existing service type did not persist")
 	}
 	if got.Name != "Noise complaint (retired)" {
 		t.Errorf("Name = %q", got.Name)
@@ -107,9 +107,9 @@ func TestFalseDefaultedColumns(t *testing.T) {
 	db := storetest.New(t)
 
 	all := falseDefaultedColumns(db, &domain.ServiceType{
-		Active: false, PublicVisible: false, AllowsAttachments: false,
+		PublicVisible: false, AllowsAttachments: false,
 	})
-	for _, want := range []string{"active", "public_visible", "allows_attachments"} {
+	for _, want := range []string{"public_visible", "allows_attachments"} {
 		if _, ok := all[want]; !ok {
 			t.Errorf("%s not flagged for repair; its default would stand", want)
 		}
@@ -121,7 +121,7 @@ func TestFalseDefaultedColumns(t *testing.T) {
 	}
 
 	none := falseDefaultedColumns(db, &domain.ServiceType{
-		Active: true, PublicVisible: true, AllowsAttachments: true,
+		PublicVisible: true, AllowsAttachments: true,
 	})
 	if len(none) != 0 {
 		t.Errorf("nothing needed repair, got %v", none)

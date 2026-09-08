@@ -62,7 +62,7 @@ const CATALOG = {
  * a report's detail view — but the intake and tracking forms are checked signed
  * out, because that is how most residents meet them.
  */
-async function stubApi(page: Page, { signedIn = false } = {}) {
+async function stubApi(page: Page, { signedIn = false, promoted = false } = {}) {
   // Order matters, and not the way it reads. Playwright tries the most recently
   // registered matching route first, so the catch-all goes down FIRST and the
   // specific routes after it — the intuitive order silently shadows every stub
@@ -88,7 +88,14 @@ async function stubApi(page: Page, { signedIn = false } = {}) {
   // no-results fallback has to handle.
   await page.route("**/api/portal/catalog**", (route) => {
     const q = new URL(route.request().url()).searchParams.get("q") ?? "";
-    let items = CATALOG.items;
+    // Promotion is opt-in rather than part of the baseline catalogue. A
+    // promoted service appears twice on the landing page — once as a shortcut,
+    // once under its category — and every locator in this suite would have to
+    // be scoped to one of the two. The duplication is the point of the test
+    // that asks for it, and noise everywhere else.
+    let items = promoted
+      ? CATALOG.items.map((i, n) => ({ ...i, promoted: true, promotedOrder: CATALOG.items.length - 1 - n }))
+      : CATALOG.items;
     if (q.trim()) {
       const term = q.trim().toLowerCase();
       items = items.filter((i) => `${i.name} ${i.category}`.toLowerCase().includes(term));
@@ -136,6 +143,34 @@ test("landing page — finding a service", async ({ page }) => {
   // The catalogue must actually be on the page: an empty one passes any scan.
   await expect(page.getByRole("link", { name: /pothole repair/i })).toBeVisible();
   await expect(page.getByRole("heading", { name: /roads & transport/i })).toBeVisible();
+
+  const results = await scan(page);
+  expect(describe(results.violations)).toBe("");
+});
+
+/**
+ * The shortcut row repeats services that also appear under their category, so
+ * the same accessible name occurs twice on the page. That is fine for sighted
+ * users and a trap for everyone else if the two are not distinguishable — the
+ * row needs its own labelled region, and the duplicate links need to be
+ * reachable and announced in the order staff chose.
+ */
+test("landing page — the promoted shortcut row", async ({ page }) => {
+  await stubApi(page, { promoted: true });
+  await page.goto("/");
+
+  const shortcuts = page.getByRole("region", { name: /most requested/i });
+  await expect(shortcuts).toBeVisible();
+
+  // Staff order, not catalogue order: graffiti was promoted to position 0.
+  const names = await shortcuts.getByRole("link").allInnerTexts();
+  expect(names[0]).toContain("Graffiti removal");
+  expect(names[1]).toContain("Pothole repair");
+
+  // And the promoted services are still findable under their categories, so a
+  // resident who browses rather than uses the shortcuts is not sent looking.
+  await expect(page.getByRole("heading", { name: /parks & public space/i })).toBeVisible();
+  expect(await page.getByRole("link", { name: /graffiti removal/i }).count()).toBe(2);
 
   const results = await scan(page);
   expect(describe(results.violations)).toBe("");

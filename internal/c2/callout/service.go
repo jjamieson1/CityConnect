@@ -285,9 +285,11 @@ func (s *Service) quickLinks(ctx context.Context) []Task {
 		}
 		// The same test the portal applies before accepting a report. Offering
 		// what it would refuse is worse than not offering it.
-		if !st.Active || !st.PublicVisible {
+		if !st.OfferedToPublicAt(time.Now()) {
 			s.log.WarnContext(ctx, "quick link names a service citizens cannot submit",
-				"code", code, "active", st.Active, "publicVisible", st.PublicVisible)
+				"code", code, "publishState", st.PublishState,
+				"publicVisible", st.PublicVisible,
+				"effectiveStart", st.EffectiveStart, "effectiveEnd", st.EffectiveEnd)
 			continue
 		}
 

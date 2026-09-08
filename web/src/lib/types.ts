@@ -67,6 +67,13 @@ export interface Queue {
   members?: User[];
 }
 
+/**
+ * Where a catalogue entry sits between being written and being retired.
+ * Replaces the `active` boolean: one bit could not tell a service nobody has
+ * finished from one withdrawn after ten years of requests.
+ */
+export type PublishState = "draft" | "published" | "archived";
+
 export interface ServiceType {
   id: string;
   code: string;
@@ -80,7 +87,13 @@ export interface ServiceType {
   requiresLocation: boolean;
   allowsAttachments: boolean;
   publicVisible: boolean;
-  active: boolean;
+  publishState: PublishState;
+  /** ISO instants bounding a seasonal service. Absent means unbounded. */
+  effectiveStart?: string;
+  effectiveEnd?: string;
+  /** A shortcut on the portal's landing view, and where it sits in the row. */
+  promoted?: boolean;
+  promotedOrder?: number;
   intakeForm?: { fields?: FormField[] };
   department?: Department;
   slaPolicy?: SLAPolicy;

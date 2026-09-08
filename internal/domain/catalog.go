@@ -25,6 +25,41 @@ type ServiceCategory struct {
 	Children []ServiceCategory `gorm:"-" json:"children,omitempty"`
 }
 
+// PublishState is where a catalogue entry sits on its way from being written
+// to being retired.
+//
+// It replaces the Active boolean it grew out of. A single bit could say
+// "switched off" but not *why*: a service being drafted and a service withdrawn
+// after ten years of requests are both inactive, and a municipality needs to
+// tell them apart — one is not ready, the other is history. PublicVisible
+// survives alongside this because it answers a different question entirely:
+// whether a live service is offered to residents or kept for staff intake.
+type PublishState string
+
+// The three states a catalogue entry can be in.
+const (
+	// PublishDraft is written but not live. Invisible to the public and to
+	// staff intake; visible in the configuration console.
+	PublishDraft PublishState = "draft"
+
+	// PublishPublished is live, subject to its effective dates.
+	PublishPublished PublishState = "published"
+
+	// PublishArchived is withdrawn. It is never deleted while requests point at
+	// it, because a request must always be able to say what was asked for and a
+	// resident looking at a five-year-old report should still see its name.
+	PublishArchived PublishState = "archived"
+)
+
+// ValidPublishState reports whether s is one of the three known states.
+func ValidPublishState(s PublishState) bool {
+	switch s {
+	case PublishDraft, PublishPublished, PublishArchived:
+		return true
+	}
+	return false
+}
+
 // ServiceType is an entry in the service catalogue: the kind of thing a
 // citizen can ask the city for. It carries the intake form schema, the routing
 // default, the SLA policy, and the binding to a C2 Service Card.
@@ -69,7 +104,28 @@ type ServiceType struct {
 	RequiresLocation  bool   `gorm:"not null;default:false" json:"requiresLocation"`
 	AllowsAttachments bool   `gorm:"not null;default:true" json:"allowsAttachments"`
 	PublicVisible     bool   `gorm:"not null;default:true" json:"publicVisible"`
-	Active            bool   `gorm:"not null;default:true" json:"active"`
+
+	// PublishState gates the whole entry. Defaults to published so an existing
+	// catalogue keeps working across the upgrade that introduced this field.
+	PublishState PublishState `gorm:"size:20;not null;default:'published';index" json:"publishState"`
+
+	// EffectiveStart and EffectiveEnd bound a published service to a window,
+	// which is how a municipality actually runs seasonal work: yard-waste
+	// collection is live from April, not permanently.
+	//
+	// Both are instants and both are optional; nil means unbounded on that
+	// side. The console picks a date and sends the start of that day and the
+	// *end* of the closing day, both in the operator's own time zone, so
+	// "available until September 30" includes September 30.
+	EffectiveStart *time.Time `gorm:"index" json:"effectiveStart,omitempty"`
+	EffectiveEnd   *time.Time `gorm:"index" json:"effectiveEnd,omitempty"`
+
+	// Promoted lifts a service onto the portal's landing view as a shortcut,
+	// and PromotedOrder is the order staff put them in. A city knows which
+	// three or four things it is asked for most, and making a resident search
+	// for them is a self-inflicted wound.
+	Promoted      bool `gorm:"not null;default:false;index" json:"promoted"`
+	PromotedOrder int  `gorm:"not null;default:0" json:"promotedOrder"`
 
 	// IntakeForm describes the extra fields captured for this service type.
 	// See FormField for the element shape.
@@ -81,6 +137,37 @@ type ServiceType struct {
 
 	Department *Department `gorm:"foreignKey:DepartmentID" json:"department,omitempty"`
 	SLAPolicy  *SLAPolicy  `gorm:"foreignKey:SLAPolicyID" json:"slaPolicy,omitempty"`
+}
+
+// EffectiveAt reports whether the entry's dated window covers t.
+//
+// An absent bound is unbounded rather than closed, so a service with no dates
+// is always in window — which is the overwhelming majority of a catalogue.
+func (st *ServiceType) EffectiveAt(t time.Time) bool {
+	if st.EffectiveStart != nil && t.Before(*st.EffectiveStart) {
+		return false
+	}
+	if st.EffectiveEnd != nil && !t.Before(*st.EffectiveEnd) {
+		return false
+	}
+	return true
+}
+
+// LiveAt reports whether the catalogue should offer this service at t: it is
+// published, and it is inside its dates.
+func (st *ServiceType) LiveAt(t time.Time) bool {
+	return st.PublishState == PublishPublished && st.EffectiveAt(t)
+}
+
+// OfferedToPublicAt reports whether a member of the public may see this service
+// and file against it.
+//
+// The one test every public-facing surface applies. It exists as a method
+// rather than as a condition repeated per call site because those call sites
+// include an unauthenticated endpoint, and a rule copied four times is a rule
+// that will eventually be copied wrong.
+func (st *ServiceType) OfferedToPublicAt(t time.Time) bool {
+	return st.LiveAt(t) && st.PublicVisible
 }
 
 // FormField is one element of a ServiceType's intake form. Stored inside

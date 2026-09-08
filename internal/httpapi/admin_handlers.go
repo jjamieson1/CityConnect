@@ -27,6 +27,9 @@ func (s *Server) mountCatalog(r chi.Router) {
 	r.Route("/service-types", func(c chi.Router) {
 		c.With(read).Get("/", s.handleListServiceTypes)
 		c.With(write).Post("/", s.handleSaveServiceType)
+		// Before /{id}, so "promoted" is read as the shortcut list rather than
+		// as somebody's service id.
+		c.With(write).Put("/promoted", s.handleSetPromoted)
 		c.With(read).Get("/{id}", s.handleGetServiceType)
 		c.With(write).Patch("/{id}", s.handleSaveServiceType)
 		c.With(write).Delete("/{id}", s.handleDeleteServiceType)
@@ -107,6 +110,31 @@ func (s *Server) handleSaveServiceType(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, saved)
+}
+
+// handleSetPromoted replaces the portal's landing-view shortcuts.
+//
+// A whole-list PUT rather than a flag per service: the order is the point, and
+// a reorder cannot be expressed as a series of single-row edits without the
+// public page showing a half-applied list in between.
+func (s *Server) handleSetPromoted(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		IDs []string `json:"ids"`
+	}
+	if !decode(w, r, &body) {
+		return
+	}
+	err := s.Catalog.SetPromoted(r.Context(), principalFrom(r.Context()).Actor(), body.IDs)
+	if err != nil {
+		fail(w, r, err)
+		return
+	}
+	items, err := s.Catalog.PromotedServices(r.Context())
+	if err != nil {
+		fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, listing(items))
 }
 
 func (s *Server) handleDeleteServiceType(w http.ResponseWriter, r *http.Request) {
