@@ -34,6 +34,14 @@ export interface CatalogEntry {
   /** A shortcut on the landing view, and where staff put it in the row. */
   promoted?: boolean;
   promotedOrder?: number;
+  /**
+   * The City's current targets, in elapsed hours from now with the working
+   * calendar applied. Absent when no SLA policy is attached — a page that says
+   * nothing beats one that invents a promise.
+   */
+  expect?: { firstResponseHours?: number; resolutionHours?: number };
+  /** Read-through from the back office knowledge base. Nothing fills it yet. */
+  relatedArticles?: { title: string; url: string }[];
 }
 
 export interface MyUpdate {
