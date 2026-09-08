@@ -32,11 +32,29 @@ matters:
   honest "Configuration" beside a working demo beats an "Out-of-the-box" that collapses in a
   reference call, and that is now a bid-losing rather than a reputational risk.
 
-### The one thing still needed
+### The dates
 
-**The actual closing date.** "Open" is not a schedule. Everything below is sequenced so that
-stopping at any sprint boundary leaves something coherent, but the choice of *which* boundary to
-stop at cannot be made without a date. It is on bids&tenders; it is not in this repository.
+| Milestone | Date | From 2026-09-07 |
+|---|---|---|
+| **RFP closing** | **2026-11-11** | 65 days · 9.3 weeks |
+| Submission buffer — final read, appendices assembled, addenda acknowledged | 2026-11-06 | 60 days |
+| Response pack complete | 2026-11-01 | 55 days |
+| Demo rehearsed end to end | 2026-10-30 | 53 days |
+| **Feature freeze for anything the matrix claims** | **2026-10-25** | 48 days |
+
+Confirmed 2026-09-07. September 2 was the question deadline; the closing date moved to November 11.
+
+**The feature freeze is the date that governs the build.** Nothing built after it can honestly be
+claimed as Out-of-the-box in the Appendix G matrix, because there is no time left to demonstrate it.
+Work after that date is for the demo's polish and for the next engagement, not for the response.
+
+### One thing to check, not assume
+
+**The closing date moved, which means an addendum was issued.** RFP §6.8.3 requires every addendum
+to be acknowledged in the response, and an unacknowledged one is a disqualification risk that has
+nothing to do with the quality of the bid. Pull the full list from bids&tenders and read each —
+addenda amend requirements as well as dates, so one of them may have changed something this plan is
+built on.
 
 ## 1. Strategy in three sentences
 
@@ -147,28 +165,47 @@ front of it changes. Close on the security dashboard and the compliance mapping.
 
 ## 5. Build order
 
-Sequenced so that **a demo exists at the end of every sprint** and each sprint's demo is strictly
-better than the last. If the runway is cut, we stop at a sprint boundary and still have something to
-show.
+**Dated against the 2026-11-11 close.** Sequenced so a demo exists at the end of every sprint and
+each is strictly better than the last, so stopping at any boundary still leaves something coherent.
 
-### Sprint 1 — "The front door" (the demo minimum)
-Act 1 + Act 2. Anonymous/guest intake, non-sequential references, catalogue search and hierarchy,
-public tracking with a second factor and rate limiting, guest email notification, a working malware
-scanner. Without this sprint there is no demo.
+### Sprint 1 — "The front door" · **complete**
 
-### Sprint 2 — "The City runs it" (the differentiator)
-Act 3. Visual form builder with conditional fields, config governance (draft → review → approve →
-publish) with versioned diffs, the three admin personas, configurable portal content and navigation.
+Anonymous, guest and authenticated intake · non-sequential references · catalogue search with
+synonyms and typo tolerance · a category hierarchy · public tracking with a second factor and
+enumeration-resistant rate limiting · direct email for requesters C2 cannot reach · attachments
+scanned before storage · abuse hardening · a versioned collection notice recorded per submission ·
+CI running build, accessibility and security on every commit.
 
-### Sprint 3 — "Trust" (the close)
-Act 4 + the response pack. `CrmCaseAdapter` port with a stub implementation and `crm_sync_log`,
-location services completed (GIS type-ahead, boundary check, map pin with non-map fallback),
-WCAG 2.2 AA remediation with axe in CI, the security pipeline, and the Appendix G/H/I response
-matrices.
+Acts 1 and 2 of the demo are real. One item outstanding: publish state and effective dates (CIT-18),
+which Sprint 2 needs anyway.
 
-**Parallel throughout:** the response pack (§6) is written as the features land, not afterwards.
+### Sprint 2 — "The City runs it" · to **2026-10-25**, the feature freeze
 
----
+Act 3, and the argument that wins municipal bids: *can your staff change it without calling the
+vendor?* The visual form builder with conditional fields, draft → review → approve → publish
+governance with versioned diffs, the three admin personas, configurable portal content.
+
+This sprint carries the most value and the most risk. The form builder is the hard piece — the brief
+says so and it is right — and it is the thing most likely to slip past the freeze.
+
+### Sprint 3 — "Trust" · to **2026-11-01**, alongside the response pack
+
+Act 4. The `CrmCaseAdapter` port with a stub and `crm_sync_log`, the WCAG 2.2 AA manual audit, the
+PIPEDA obligations, and the Appendix I positions.
+
+### What gets answered rather than built
+
+Nine weeks does not fit everything, and pretending otherwise produces a matrix that fails a
+reference call. **Location services (CIT-7) are the deliberate cut.** GIS type-ahead, a boundary
+check and map-pin capture are a per-engagement integration against a City's own address data — they
+are properly scoped at kick-off with Burnaby's dataset in hand, not guessed at now. Answered as
+Development, with the seam described.
+
+The same applies to environment promotion, non-production masking and consent-aware analytics.
+
+**The test of every one of these is the same:** if it cannot be shown working by 2026-10-25, it is
+Development or Future Release in the matrix, not Out-of-the-box. That is a decision to make
+deliberately per requirement, in writing, rather than one to discover in the week of submission.
 
 ## 6. The response pack — a first-class deliverable
 
