@@ -48,7 +48,7 @@ well, not just this one.
 | `/app/cityconnect/portal/` | the built citizen SPA |
 | `/app/cityconnect/console/` | the built staff SPA |
 | `/app/cityconnect/data/attachments/` | citizen uploads, including `quarantine/` — the only writable path |
-| `/app/cityconnect/keys/` | the C2 client signing key (0400, not yet enabled) |
+| `/app/cityconnect/keys/` | the C2 client signing key (dir 0700, key 0400, both owned by the service account; not yet enabled) |
 | `/etc/systemd/system/cityconnect.service` | the unit |
 | `/etc/apache2/sites-available/cityconnect-{portal,admin}.conf` | the vhosts |
 | `/swapfile`, `/etc/clamav/clamd.conf` | host-level, owned by `host-setup.sh` and shared with every app on the box |
