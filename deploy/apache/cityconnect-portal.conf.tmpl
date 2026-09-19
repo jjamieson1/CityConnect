@@ -1,0 +1,142 @@
+# Rendered from deploy/apache/cityconnect-portal.conf.tmpl.
+# Do not edit the rendered copy; it is overwritten on the next deploy.
+#
+# The CITIZEN PORTAL, on its own hostname.
+#
+# A separate origin from the staff console, not a path on it. That is the whole
+# point of the split: a distinct origin means a distinct cookie jar, so script
+# running on the public site has no ambient authority over a staff session in
+# the same browser.
+#
+# This host is also THE ONLY SURFACE C2 TALKS TO. C2 is an external system and
+# cannot reach the API's listening port. Every inbound C2 endpoint is published
+# here and proxied on, and the API stays bound to loopback (CC_ADDR).
+#
+# That binding is what makes the rules below meaningful. An API listening on a
+# public interface can be reached directly, and every Require here is then
+# decoration. If you change CC_ADDR you are changing the security model.
+#
+# Requires: a2enmod proxy proxy_http headers rewrite deflate ssl
+<VirtualHost *:80>
+    ServerName @@DOMAIN@@
+    # Keep the ACME path on HTTP so renewals work.
+    <Location "/.well-known/acme-challenge">
+        Require all granted
+    </Location>
+    RedirectMatch permanent ^(?!/\.well-known/acme-challenge)(.*)$ https://@@DOMAIN@@$1
+</VirtualHost>
+
+<VirtualHost *:443>
+    ServerName @@DOMAIN@@
+    DocumentRoot @@APP_DIR@@/portal
+
+    SSLEngine on
+    SSLCertificateFile    /etc/letsencrypt/live/@@DOMAIN@@/fullchain.pem
+    SSLCertificateKeyFile /etc/letsencrypt/live/@@DOMAIN@@/privkey.pem
+    SSLProtocol           -all +TLSv1.2 +TLSv1.3
+    SSLHonorCipherOrder   off
+
+    # --- API, on this app's own origin -----------------------------------
+    # Same origin as the SPA, so the portal's cookie never needs
+    # SameSite=None — which would weaken CSRF protection on both surfaces.
+    ProxyPass        /api  http://127.0.0.1:@@PORT@@/api  connectiontimeout=5 timeout=60 retry=0
+    ProxyPassReverse /api  http://127.0.0.1:@@PORT@@/api
+
+    <Location /api>
+        RequestHeader set X-Forwarded-Proto "https"
+        ProxyPreserveHost On
+        Header always set Cache-Control "no-store"
+    </Location>
+
+    # --- What this origin is allowed to expose ----------------------------
+    #
+    # Default deny, then allow exactly three groups. The API enforces its own
+    # authorisation regardless — a portal cookie is refused everywhere outside
+    # /api/portal, and every C2 endpoint verifies a signed assertion — but a
+    # public origin should not even be able to REACH the staff surface.
+    <Location /api>
+        Require all denied
+    </Location>
+
+    # 1. The citizen portal's own API, and the sign-in callback the browser
+    #    returns to after C2.
+    <Location /api/portal>
+        Require all granted
+    </Location>
+    <Location /api/auth/callback>
+        Require all granted
+    </Location>
+
+    # 2. The Service Card callout. C2 calls this server-to-server and
+    #    authenticates with a short-lived RS256 assertion verified against its
+    #    own JWKS, so it is safe to publish and must be publicly reachable.
+    <LocationMatch "^/api/citizens/[^/]+/status$">
+        Require all granted
+    </LocationMatch>
+
+    # 3. Back-channel logout, and the JWKS C2 fetches to verify the client
+    #    assertions on our partner notification calls.
+    <Location /api/c2/backchannel-logout>
+        Require all granted
+    </Location>
+    <Location /api/c2/jwks>
+        Require all granted
+    </Location>
+
+    # Health, for the deploy script's public check. Not /readyz or /metrics:
+    # those report on the database and the C2 connection and are nobody's
+    # business from the open internet.
+    ProxyPass        /healthz  http://127.0.0.1:@@PORT@@/healthz
+    ProxyPassReverse /healthz  http://127.0.0.1:@@PORT@@/healthz
+
+    # --- SPA --------------------------------------------------------------
+    <Directory "@@APP_DIR@@/portal">
+        Options -Indexes -MultiViews
+        AllowOverride None
+        Require all granted
+
+        # History fallback for client-side routes. The !^/api guard matters:
+        # without it a mistyped API path would answer 200 with index.html and a
+        # broken endpoint would look healthy.
+        RewriteEngine On
+        RewriteBase /
+        RewriteCond %{REQUEST_URI} !^/api
+        RewriteCond %{REQUEST_FILENAME} !-f
+        RewriteCond %{REQUEST_FILENAME} !-d
+        RewriteRule . /index.html [L]
+
+        <FilesMatch "\.(js|css|woff2?|png|jpg|svg|webp)$">
+            Header set Cache-Control "public, max-age=31536000, immutable"
+        </FilesMatch>
+        <FilesMatch "index\.html$">
+            Header set Cache-Control "no-cache, must-revalidate"
+        </FilesMatch>
+
+        AddOutputFilterByType DEFLATE text/html text/css application/javascript application/json image/svg+xml
+    </Directory>
+
+    # --- Security headers -------------------------------------------------
+    #
+    # Stricter than the console's, because this origin is public and its
+    # content includes text that citizens themselves wrote.
+    Header always set X-Content-Type-Options "nosniff"
+    Header always set X-Frame-Options "DENY"
+    Header always set Referrer-Policy "same-origin"
+    Header always set Strict-Transport-Security "max-age=31536000; includeSubDomains"
+    Header always set Cross-Origin-Opener-Policy "same-origin"
+    Header always set Permissions-Policy "geolocation=(self), camera=(), microphone=(), payment=()"
+
+    Header always set Content-Security-Policy "default-src 'self'; \
+        script-src 'self'; \
+        style-src 'self' 'unsafe-inline'; \
+        img-src 'self' data:; \
+        font-src 'self'; \
+        connect-src 'self'; \
+        frame-ancestors 'none'; \
+        form-action 'self'; \
+        base-uri 'self'; \
+        object-src 'none'"
+
+    ErrorLog  ${APACHE_LOG_DIR}/@@SERVICE@@-portal_error.log
+    CustomLog ${APACHE_LOG_DIR}/@@SERVICE@@-portal_access.log combined
+</VirtualHost>
