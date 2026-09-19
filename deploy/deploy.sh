@@ -198,6 +198,24 @@ Fix the template and re-run with --with-vhost. The bad files are on the server
 at /etc/apache2/sites-available/$SERVICE-*.conf."
 fi
 
+# ---------------------------------------------------------------------------
+# 7b. Schema
+# ---------------------------------------------------------------------------
+# Before the restart, so a migration that fails leaves the OLD binary running
+# against the schema it was built for, rather than a new one against a schema
+# half-applied.
+#
+# ccadm rather than CC_DB_AUTOMIGRATE: config validation refuses AutoMigrate on
+# anything that is not CC_ENV=dev or test, and CC_ENV=prod is what turns on the
+# C2 credential checks and the guard against binding the API publicly. An
+# explicit step here is better anyway — it fails where somebody is watching,
+# not at 3am inside a restart.
+log "Applying the schema"
+remote "set -a; . '$APP_DIR/$SERVICE.env'; set +a; '$APP_DIR/ccadm' migrate" \
+  || die "ccadm migrate failed — the service has NOT been restarted, so the
+previous binary is still serving against the schema it was built for.
+Inspect: ssh $SERVER '$APP_DIR/ccadm migrate'"
+
 log "Restarting $SERVICE"
 remote "systemctl restart '$SERVICE'"
 
