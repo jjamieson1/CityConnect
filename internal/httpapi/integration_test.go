@@ -56,10 +56,33 @@ func newEnv(t *testing.T) *env {
 	return newEnvWith(t, true)
 }
 
-// newEnvWith builds the environment, optionally skipping the baseline seed so
-// a test can exercise a genuinely empty database.
-func newEnvWith(t *testing.T, withSeed bool) *env {
+// cleanScanner stands in for clamd and clears everything.
+//
+// The default for these tests because the deployment they describe has a
+// scanner; the infected and unreachable verdicts are exercised where they
+// belong, against the store and the clamd client. What this stub buys is that
+// a nil scanner now means something — see newEnvScannerless.
+func cleanScanner(context.Context, string) requests.ScanResult {
+	return requests.ScanResult{Status: domain.ScanClean}
+}
+
+// newEnvScannerless builds the environment of a deployment with no malware
+// scanner, where attachments are refused rather than quarantined for ever.
+func newEnvScannerless(t *testing.T) *env {
 	t.Helper()
+	return newEnvWith(t, true, nil)
+}
+
+// newEnvWith builds the environment, optionally skipping the baseline seed so
+// a test can exercise a genuinely empty database. An explicit scanner may be
+// passed; with none it gets cleanScanner.
+func newEnvWith(t *testing.T, withSeed bool, scanner ...requests.ScanFunc) *env {
+	t.Helper()
+
+	scan := requests.ScanFunc(cleanScanner)
+	if len(scanner) > 0 {
+		scan = scanner[0]
+	}
 
 	stub, err := c2stub.New(c2stub.Options{ClientID: "cityconnect-test", ClientSecret: "shh"})
 	if err != nil {
@@ -144,7 +167,8 @@ func newEnvWith(t *testing.T, withSeed bool) *env {
 
 	calloutSvc := callout.NewService(db, cfg, provider, contactSvc, catalogSvc, requestSvc, log)
 	portalSvc := portal.NewService(db, cfg, provider, contactSvc, catalogSvc, requestSvc, auditSvc, log)
-	attachments, err := requests.NewAttachmentStore(cfg.AttachmentDir, 5, nil)
+	portalSvc.SetUploadsAccepted(scan != nil)
+	attachments, err := requests.NewAttachmentStore(cfg.AttachmentDir, 5, scan)
 	if err != nil {
 		t.Fatalf("attachments: %v", err)
 	}

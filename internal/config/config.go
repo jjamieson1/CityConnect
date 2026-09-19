@@ -47,6 +47,18 @@ type Config struct {
 	ScannerAddress string
 	ScannerTimeout time.Duration
 
+	// ScannerRequired says whether running without a scanner is a
+	// misconfiguration or a choice.
+	//
+	// It does not change what happens to an upload — with no scanner the
+	// service refuses files either way, because accepting one it cannot scan
+	// means quarantining it for ever. What it changes is how loudly that is
+	// reported: true (the default) treats a missing scanner as a fault worth
+	// shouting about at every boot, false treats it as a deliberate setting
+	// for a developer machine or a demo box with no room for clamd's
+	// signature database.
+	ScannerRequired bool
+
 	// ReferencePrefix leads every new request reference, so a municipality can
 	// quote BBY-7K4M-2QX9 rather than the default. Letters and digits only;
 	// the requests package normalises anything else away.
@@ -239,6 +251,7 @@ func Load() (*Config, error) {
 			Timeout:  envDuration("CC_SMTP_TIMEOUT", 30*time.Second),
 		},
 		ScannerTimeout:       envDuration("CC_SCANNER_TIMEOUT", 30*time.Second),
+		ScannerRequired:      envBool("CC_SCANNER_REQUIRED", true),
 		BootstrapAdminSubs:   envList("CC_BOOTSTRAP_ADMIN_SUBS"),
 		BootstrapAdminEmails: envList("CC_BOOTSTRAP_ADMIN_EMAILS"),
 

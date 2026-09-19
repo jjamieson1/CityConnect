@@ -30,6 +30,8 @@ export interface CatalogEntry {
   description?: string;
   department?: string;
   requiresLocation: boolean;
+  /** The service allows attachments AND this deployment can scan one. */
+  acceptsFiles: boolean;
   fields: FormField[];
   /** A shortcut on the landing view, and where staff put it in the row. */
   promoted?: boolean;

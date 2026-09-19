@@ -723,6 +723,13 @@ function Report({ signedIn }: { signedIn: boolean }) {
           </div>
         </fieldset>
 
+        {/*
+          Only when this deployment can actually take a file. acceptsFiles is
+          the service's own setting AND whether anything is able to scan an
+          upload — being asked for a photograph and then told it cannot be
+          taken is worse than never being asked.
+        */}
+        {entry.acceptsFiles && (
         <fieldset className="rounded-md border p-4" style={{ borderColor: "var(--border)" }}>
           <legend className="px-1 text-sm font-medium">Photos</legend>
           <Field
@@ -756,6 +763,7 @@ function Report({ signedIn }: { signedIn: boolean }) {
             </p>
           )}
         </fieldset>
+        )}
 
         {entry.fields.length > 0 && (
           <fieldset className="rounded-md border p-4" style={{ borderColor: "var(--border)" }}>

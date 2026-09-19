@@ -439,6 +439,17 @@ func (s *Server) handleListAttachments(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
+	// Staff are refused for the same reason residents are, and worded for
+	// somebody who can act on it. An agent who could attach a file the
+	// scanner never saw would be the hole the portal route carefully does not
+	// have — a quarantine with one door left open is not a quarantine.
+	if !s.Attachments.AcceptsUploads() {
+		writeProblem(w, r, http.StatusServiceUnavailable, "attachments_unavailable",
+			"Attachments are unavailable: no malware scanner is configured. "+
+				"Set CC_SCANNER_ADDRESS and restart the service.")
+		return
+	}
+
 	maxBytes := s.cfg.AttachmentMaxMB << 20
 	r.Body = http.MaxBytesReader(w, r.Body, maxBytes+(1<<20))
 
