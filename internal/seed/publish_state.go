@@ -25,11 +25,15 @@ import (
 // had since republished. Setting it true everywhere makes the pass idempotent
 // without a migration table.
 func adoptPublishState(ctx context.Context, db *gorm.DB, log *slog.Logger) error {
-	// A fresh deployment never had the column. Probing for it beats keeping a
-	// dialect-specific information_schema query in step with two databases.
-	var probe []bool
-	if err := db.WithContext(ctx).
-		Raw("SELECT active FROM service_types LIMIT 1").Scan(&probe).Error; err != nil {
+	// A fresh deployment never had the column.
+	//
+	// Asked through the migrator rather than by running `SELECT active` and
+	// catching the failure. Both answer correctly, but the failing query is
+	// logged as an ERROR by GORM before this function ever sees it — so every
+	// boot of a clean install printed "Unknown column \'active\'" at error
+	// level for a condition that is entirely expected, which is exactly the
+	// sort of thing that teaches an operator to ignore the log.
+	if !db.WithContext(ctx).Migrator().HasColumn(&domain.ServiceType{}, "active") {
 		return nil
 	}
 
