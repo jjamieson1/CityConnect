@@ -16,6 +16,7 @@ type catalogEntry struct {
 		ResolutionHours    int `json:"resolutionHours"`
 	} `json:"expect"`
 	Department      string `json:"department"`
+	AcceptsFiles    bool   `json:"acceptsFiles"`
 	RelatedArticles []struct {
 		Title string `json:"title"`
 		URL   string `json:"url"`

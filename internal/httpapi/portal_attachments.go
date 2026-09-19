@@ -36,6 +36,21 @@ const (
 // so they present the short-lived grant issued when the report was filed —
 // bound to that one request id, so it cannot be turned on anyone else's.
 func (s *Server) handlePortalUpload(w http.ResponseWriter, r *http.Request) {
+	// First, before the reference is even looked up. With no scanner this file
+	// could only ever be quarantined, and taking it would tell the resident
+	// their photo arrived when nobody will ever see it.
+	//
+	// Answering here also means an unauthenticated caller learns nothing about
+	// which references exist from a request that was never going to be
+	// accepted — the refusal is a property of the deployment, not of the
+	// report.
+	if !s.Attachments.AcceptsUploads() {
+		writeProblem(w, r, http.StatusServiceUnavailable, "attachments_unavailable",
+			"We cannot accept photos at the moment. Your report has been received — "+
+				"quote your reference if you need to send a photo another way.")
+		return
+	}
+
 	reference := chi.URLParam(r, "reference")
 
 	req, err := s.Requests.GetByReference(r.Context(), reference)

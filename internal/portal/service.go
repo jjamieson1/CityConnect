@@ -59,7 +59,19 @@ type Service struct {
 	requests *requests.Service
 	audit    *audit.Service
 	log      *slog.Logger
+
+	// uploads is whether this deployment can take a file at all — false when
+	// no malware scanner is wired. Set by the server at start-up rather than
+	// read from config, because the attachment store is the thing that
+	// actually knows, and two places deciding it is how they come to disagree.
+	uploads bool
 }
+
+// SetUploadsAccepted tells the portal whether attachments can be taken.
+//
+// Off until something says otherwise: a portal that offers a photo control no
+// upload endpoint will honour is worse than one that never asks.
+func (s *Service) SetUploadsAccepted(ok bool) { s.uploads = ok }
 
 // NewService builds the portal service.
 func NewService(

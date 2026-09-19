@@ -28,11 +28,19 @@ type CatalogEntry struct {
 	// CategoryPath is the category and its ancestors, outermost first, so the
 	// portal can group by the top level and show "Roads & transport →
 	// Potholes" without a second request per service.
-	CategoryPath []string           `json:"categoryPath,omitempty"`
-	Description  string             `json:"description,omitempty"`
-	Department   string             `json:"department,omitempty"`
-	NeedsPlace   bool               `json:"requiresLocation"`
-	Fields       []domain.FormField `json:"fields"`
+	CategoryPath []string `json:"categoryPath,omitempty"`
+	Description  string   `json:"description,omitempty"`
+	Department   string   `json:"department,omitempty"`
+	NeedsPlace   bool     `json:"requiresLocation"`
+
+	// AcceptsFiles is the service's own setting AND whether this deployment
+	// can scan a file at all. Both, in one answer, so the portal does not
+	// offer a photo control that the upload endpoint would refuse — being
+	// asked for a photograph and then told it cannot be taken is worse than
+	// never being asked.
+	AcceptsFiles bool `json:"acceptsFiles"`
+
+	Fields []domain.FormField `json:"fields"`
 
 	// CollectionNotice is the wording to show before personal details are asked
 	// for, and NoticeID identifies the exact version — the client sends it back
@@ -179,9 +187,10 @@ func (s *Service) Catalog(ctx context.Context, query string) ([]CatalogEntry, er
 			ID: st.ID, Code: st.Code, Name: st.Name, Category: st.Category,
 			CategoryPath: pathFor(st.CategoryID),
 			Description:  st.Description, NeedsPlace: st.RequiresLocation,
-			Fields:   fields,
-			Expect:   expectFor(st.SLAPolicyID, st.DefaultPriority),
-			Promoted: st.Promoted, PromotedOrder: st.PromotedOrder,
+			Fields:       fields,
+			AcceptsFiles: st.AllowsAttachments && s.uploads,
+			Expect:       expectFor(st.SLAPolicyID, st.DefaultPriority),
+			Promoted:     st.Promoted, PromotedOrder: st.PromotedOrder,
 		}
 		if entry.Fields == nil {
 			entry.Fields = []domain.FormField{}

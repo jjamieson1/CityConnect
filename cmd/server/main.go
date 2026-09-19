@@ -163,15 +163,28 @@ func run() error {
 			}
 			return requests.ScanResult{Status: res.Status, Note: res.Note}
 		}
+	} else if cfg.ScannerRequired {
+		// A fault, not a setting. Attachments are refused outright and every
+		// boot says so, because this is nearly always somebody who meant to
+		// configure a scanner and did not.
+		log.Warn("NO MALWARE SCANNER CONFIGURED — attachments will be refused",
+			"set", "CC_SCANNER_ADDRESS",
+			"or", "CC_SCANNER_REQUIRED=false to say this deployment means it")
 	} else {
-		log.Warn("no malware scanner configured; every upload will be quarantined",
-			"set", "CC_SCANNER_ADDRESS")
+		// Said once, calmly. A developer machine or a demo box without room
+		// for clamd's signature database is a legitimate deployment; it just
+		// cannot take files.
+		log.Info("attachments disabled: no scanner, and CC_SCANNER_REQUIRED=false")
 	}
 
 	attachments, err := requests.NewAttachmentStore(cfg.AttachmentDir, cfg.AttachmentMaxMB, scanner)
 	if err != nil {
 		return err
 	}
+	// The store is the one that knows. Asking it, rather than re-deriving the
+	// answer from config here, keeps the portal's photo control and the upload
+	// endpoint from ever disagreeing about whether a file can be taken.
+	portalSvc.SetUploadsAccepted(attachments.AcceptsUploads())
 
 	if err := seed.Run(ctx, db, cfg, log); err != nil {
 		return fmt.Errorf("seed: %w", err)

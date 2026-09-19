@@ -49,6 +49,12 @@ type AttachmentStore struct {
 	dir   string
 	maxMB int64
 	scan  ScanFunc
+
+	// scannerless records that no scanner was wired at construction. The
+	// constructor substitutes a quarantine-everything stub for a nil ScanFunc,
+	// so without this the store could not afterwards tell "no scanner" from
+	// "a scanner that keeps saying pending".
+	scannerless bool
 }
 
 // ScanResult is a scanner's verdict on one file.
@@ -69,15 +75,19 @@ type ScanFunc func(ctx context.Context, path string) ScanResult
 
 // NewAttachmentStore builds a file store rooted at dir.
 //
-// A nil scan function quarantines everything. That is deliberate and it is the
-// safe default: an unconfigured deployment holds uploads rather than storing
-// files nobody has looked at, and the operator finds out because attachments
-// stop appearing — not because one turns up in an inbox.
+// A nil scan function quarantines everything, and AcceptsUploads then reports
+// false so callers can refuse the file instead of taking it. That is the safe
+// default either way: an unconfigured deployment never stores a file nobody
+// has looked at.
 func NewAttachmentStore(dir string, maxMB int64, scan ScanFunc) (*AttachmentStore, error) {
 	if err := os.MkdirAll(filepath.Join(dir, quarantineDir), 0o750); err != nil {
 		return nil, fmt.Errorf("requests: create attachment dir: %w", err)
 	}
-	if scan == nil {
+	scannerless := scan == nil
+	if scannerless {
+		// Still substituted rather than left nil, so a file that somehow
+		// reaches Attach — a caller that skipped the check, a future code
+		// path — quarantines rather than panicking or being stored unscanned.
 		scan = func(context.Context, string) ScanResult {
 			return ScanResult{Status: domain.ScanPending, Note: "no scanner configured"}
 		}
@@ -85,8 +95,21 @@ func NewAttachmentStore(dir string, maxMB int64, scan ScanFunc) (*AttachmentStor
 	if maxMB <= 0 {
 		maxMB = 25
 	}
-	return &AttachmentStore{dir: dir, maxMB: maxMB, scan: scan}, nil
+	return &AttachmentStore{dir: dir, maxMB: maxMB, scan: scan, scannerless: scannerless}, nil
 }
+
+// AcceptsUploads reports whether the store will take a file at all.
+//
+// False when no scanner is wired. Quarantining a file we already know can
+// never be scanned is not caution, it is a black hole: the resident is told
+// their photo arrived, the quarantine never drains, and nobody finds out until
+// somebody goes looking for a photograph that was never viewable. Refusing at
+// the door is the same safety property said out loud.
+//
+// It does NOT go false when a configured scanner is merely unreachable. That
+// is usually a restart, uploads quarantine and drain when it returns, and
+// refusing them would turn a blip into lost reports.
+func (a *AttachmentStore) AcceptsUploads() bool { return !a.scannerless }
 
 // Path returns the absolute path of a stored attachment.
 func (a *AttachmentStore) Path(rel string) string {

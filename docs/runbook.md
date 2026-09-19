@@ -102,7 +102,7 @@ rather than discovering them one at a time.
 
 | Setting | Left unset | What a resident experiences |
 |---|---|---|
-| `CC_SCANNER_ADDRESS` | Every upload is quarantined and never served | They are told the photo arrived. Nobody ever sees it. |
+| `CC_SCANNER_ADDRESS` | Attachments are refused outright | They are told plainly that a photo cannot be taken, and their report is still filed. **No longer silent** — it used to quarantine the file and say it arrived. |
 | `CC_FORM_TOKEN_SECRET` | Each instance signs with its own boot-time key | Fine on one instance. On several, **reports are refused at random** — one in N submissions, looking exactly like a flaky form |
 | `CC_SMTP_HOST` | Email-bound messages wait in the outbox forever | A guest is never told their report was received, and never told why |
 | `CC_REFERENCE_PREFIX` | References read `SR-…` | Nothing breaks. But a Burnaby demo quoting `SR-` instead of `BBY-` looks like somebody else's software |
@@ -123,6 +123,19 @@ journalctl -u cityconnect-api --since '5 min ago' | grep -i warn
 
 `CC_REFERENCE_PREFIX` deliberately does not warn: its default works, it is only
 a matter of whose software the references look like.
+
+**`CC_SCANNER_ADDRESS` is the one that changed.** It used to be the worst of
+the four: an upload with no scanner was accepted, quarantined and never served,
+while the resident was told their photo had arrived. It now refuses the file at
+the door — the report is still filed, and the portal does not offer a photo
+control it cannot honour.
+
+Set **`CC_SCANNER_REQUIRED=false`** on a deployment that means it. That does not
+change what happens to an upload; it changes how loudly a missing scanner is
+reported at boot, from a warning that something is broken to a line saying
+attachments are off on purpose. A developer machine or a demo box with no room
+for clamd's signature database is a legitimate deployment — it just cannot take
+files.
 
 **Get `CC_FORM_TOKEN_SECRET` right first.** It is the only one of the four whose
 failure is *intermittent* — behind a load balancer a report is refused roughly

@@ -26,6 +26,7 @@ const CATALOG = {
       description: "Report a pothole or damaged road surface.",
       department: "Public Works",
       requiresLocation: true,
+      acceptsFiles: true,
       // Elapsed hours the server computed from the SLA policy and the working
       // calendar. Deliberately spanning both phrasings the page has to produce.
       expect: { firstResponseHours: 8, resolutionHours: 72 },
@@ -49,6 +50,10 @@ const CATALOG = {
       description: "Report graffiti on City property.",
       department: "Parks",
       requiresLocation: true,
+      // Deliberately absent, so the two entries cover both branches of the
+      // photo control: a deployment that cannot scan a file must not offer to
+      // take one.
+      acceptsFiles: false,
       fields: [],
     },
   ],
@@ -276,6 +281,28 @@ test("intake form — reporting a pothole", async ({ page }) => {
   // The form is built from the stubbed field definitions, so wait for a field
   // rather than the heading: an empty form would pass a scan meaninglessly.
   await expect(page.getByLabel(/how big is it/i)).toBeVisible();
+
+  // The photo control is in the scan, not just on the page. It is the one
+  // input here that opens a camera, and a file input with no accessible name
+  // is a common and invisible failure.
+  await expect(page.getByLabel(/add a photo/i)).toBeVisible();
+
+  const results = await scan(page);
+  expect(describe(results.violations)).toBe("");
+});
+
+/**
+ * A deployment that cannot scan a file must not offer to take one. Asking for
+ * a photograph and then refusing it is worse than never asking — and for a
+ * screen-reader user, a control that exists but cannot work is worse still.
+ */
+test("intake form — no photo control when files cannot be accepted", async ({ page }) => {
+  await stubApi(page);
+  await page.goto("/new/GRAFFITI");
+  await expect(page.getByRole("heading", { level: 1, name: /graffiti removal/i })).toBeVisible();
+
+  await expect(page.getByLabel(/add a photo/i)).toHaveCount(0);
+  await expect(page.getByText(/^photos$/i)).toHaveCount(0);
 
   const results = await scan(page);
   expect(describe(results.violations)).toBe("");
