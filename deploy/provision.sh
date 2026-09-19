@@ -173,16 +173,30 @@ remote "command -v certbot >/dev/null" || die "certbot not found on $SERVER"
 # nothing else on this box has ever needed it.
 server_ip="$(remote "curl -fsS -4 https://api.ipify.org 2>/dev/null || hostname -I | awk '{print \$1}'" || true)"
 for d in "$PORTAL_DOMAIN" "$ADMIN_DOMAIN"; do
-  resolved="$(dig +short "$d" 2>/dev/null | tail -1 || true)"
+  # An ADDRESS, not whatever `dig +short` prints last. For a CNAME that ends
+  # nowhere — pointed at an apex with no A record, say — the last line is the
+  # target name, which is non-empty and looks like success. That is how this
+  # check let cityconnect-admin.dev-pro.app through as a warning while certbot
+  # would have failed on it opaquely, half way through a provision.
+  resolved="$(dig +short "$d" A 2>/dev/null | grep -Eo '^[0-9]+(\.[0-9]+){3}$' | tail -1 || true)"
   if [[ -z "$resolved" ]]; then
-    die "$d does not resolve.
-Add a DNS record pointing it at $server_ip (a CNAME to muni-demo.dev-pro.app is
-what the other apps on this box use), wait for it to propagate, then re-run.
-certbot cannot issue a certificate for a name that does not resolve."
+    chain="$(dig +short "$d" 2>/dev/null | tr '\n' ' ' || true)"
+    if [[ -n "$chain" ]]; then
+      die "$d has DNS records but resolves to no address.
+The chain is: $chain
+That usually means a CNAME pointing somewhere with no A record of its own — an
+apex is the common mistake. Point it at a name that HAS an address:
+    $d  CNAME  muni-demo.dev-pro.app.
+which is what $PORTAL_DOMAIN does. certbot cannot issue a certificate for a
+name that resolves to nothing."
+    fi
+    die "$d does not resolve at all.
+Add a DNS record pointing it at $server_ip. A CNAME to muni-demo.dev-pro.app is
+what the other apps on this box use. Wait for it to propagate, then re-run."
   fi
   if [[ -n "$server_ip" && "$resolved" != "$server_ip" ]]; then
     warn "$d resolves to $resolved but the server reports $server_ip.
-    If that is a CNAME chain this may still be correct; certbot will be the judge."
+    certbot will be the judge, but check this is not pointing at another host."
   else
     step "$d resolves to $resolved"
   fi
