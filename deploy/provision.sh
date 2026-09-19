@@ -333,6 +333,13 @@ fi
 mkdir -p "\$APP_DIR/portal" "\$APP_DIR/console" "\$APP_DIR/data/attachments" "\$APP_DIR/keys"
 chown -R "\$SVC_USER:\$SVC_USER" "\$APP_DIR/data"
 chmod 750 "\$APP_DIR/data"
+# keys/ is chowned as well as chmodded. 0700 root:root would let the key be
+# installed and owned by the service account and still be unreadable by it,
+# because reading a file means traversing the directory above it. Nothing
+# notices until somebody enables client assertions months later and the service
+# fails to start on a permission error pointing at a file whose own mode looks
+# perfectly correct.
+chown "\$SVC_USER:\$SVC_USER" "\$APP_DIR/keys"
 chmod 700 "\$APP_DIR/keys"
 say "directories ready under \$APP_DIR"
 
