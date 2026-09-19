@@ -372,10 +372,10 @@ cat <<EOF
 
 Next:
   1. ./deploy/deploy.sh          ship the API, ccadm and both SPAs
-  2. Install a malware scanner, or every citizen attachment stays quarantined
+  2. Confirm clamd is reachable, or every citizen attachment stays quarantined
      and is never served:
-       ssh $SERVER 'apt-get install -y clamav-daemon'
-     then set CC_SCANNER_ADDRESS=127.0.0.1:3310 and restart.
+       ssh $SERVER 'clamdscan --ping 1'
+     CC_SCANNER_ADDRESS already points at /var/run/clamav/clamd.ctl.
   3. Set CC_SMTP_HOST once this box has a relay, or guests are never told
      their report was received.
 
