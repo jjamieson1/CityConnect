@@ -173,27 +173,43 @@ remote "command -v certbot >/dev/null" || die "certbot not found on $SERVER"
 # nothing else on this box has ever needed it.
 server_ip="$(remote "curl -fsS -4 https://api.ipify.org 2>/dev/null || hostname -I | awk '{print \$1}'" || true)"
 for d in "$PORTAL_DOMAIN" "$ADMIN_DOMAIN"; do
-  # An ADDRESS, not whatever `dig +short` prints last. For a CNAME that ends
-  # nowhere — pointed at an apex with no A record, say — the last line is the
-  # target name, which is non-empty and looks like success. That is how this
-  # check let cityconnect-admin.dev-pro.app through as a warning while certbot
-  # would have failed on it opaquely, half way through a provision.
-  resolved="$(dig +short "$d" A 2>/dev/null | grep -Eo '^[0-9]+(\.[0-9]+){3}$' | tail -1 || true)"
+  resolved="$(resolve_addr "$d" || true)"
+
   if [[ -z "$resolved" ]]; then
-    chain="$(dig +short "$d" 2>/dev/null | tr '\n' ' ' || true)"
-    if [[ -n "$chain" ]]; then
-      die "$d has DNS records but resolves to no address.
+    # Nothing from the recursive resolver. Before refusing, ask the zone's own
+    # nameservers: the question that matters is whether LET'S ENCRYPT can
+    # resolve this name, and it resolves independently of whatever this
+    # machine has cached. A record fixed minutes ago is correct at the
+    # authority and wrong in a cache for as long as the OLD record's TTL —
+    # Cloudflare held a stale answer for cityconnect-admin for twelve hours.
+    # Refusing to provision over that would be the check being wrong, not DNS.
+    auth="$(resolve_addr_authoritative "$d" || true)"
+
+    if [[ -n "$auth" ]]; then
+      warn "$d is correct at its authoritative nameservers ($auth), but this
+    machine's resolver still has a stale answer cached:
+        $(dig +short "$d" 2>/dev/null | tr '\n' ' ')
+    Let's Encrypt resolves independently and will most likely succeed.
+    If certbot does fail on this name, wait for the old TTL to expire and run
+    this again — provisioning is idempotent and picks up where it stopped."
+      resolved="$auth"
+    else
+      chain="$(dig +short "$d" 2>/dev/null | tr '\n' ' ' || true)"
+      if [[ -n "$chain" ]]; then
+        die "$d has DNS records but resolves to no address, at its own
+nameservers as well as here.
 The chain is: $chain
 That usually means a CNAME pointing somewhere with no A record of its own — an
 apex is the common mistake. Point it at a name that HAS an address:
     $d  CNAME  muni-demo.dev-pro.app.
-which is what $PORTAL_DOMAIN does. certbot cannot issue a certificate for a
-name that resolves to nothing."
-    fi
-    die "$d does not resolve at all.
+which is what $PORTAL_DOMAIN does."
+      fi
+      die "$d does not resolve at all.
 Add a DNS record pointing it at $server_ip. A CNAME to muni-demo.dev-pro.app is
-what the other apps on this box use. Wait for it to propagate, then re-run."
+what the other apps on this box use."
+    fi
   fi
+
   if [[ -n "$server_ip" && "$resolved" != "$server_ip" ]]; then
     warn "$d resolves to $resolved but the server reports $server_ip.
     certbot will be the judge, but check this is not pointing at another host."
