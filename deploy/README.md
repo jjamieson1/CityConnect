@@ -51,6 +51,7 @@ well, not just this one.
 | `/app/cityconnect/keys/` | the C2 client signing key (0400, not yet enabled) |
 | `/etc/systemd/system/cityconnect.service` | the unit |
 | `/etc/apache2/sites-available/cityconnect-{portal,admin}.conf` | the vhosts |
+| `/swapfile`, `/etc/clamav/clamd.conf` | host-level, owned by `host-setup.sh` and shared with every app on the box |
 
 The API listens on **127.0.0.1:8095**. Neighbours: 8090 audit, 8092 c2-api,
 8093 parking, 8094 facility-booking.
@@ -60,6 +61,51 @@ This follows facility-booking's layout rather than this repo's older
 and the apps live under `/app` rather than `/var/www`. `deployment/` is still
 the reference for a generic install and is what `docs/runbook.md` describes;
 nothing here replaces it.
+
+## A new host
+
+Three scripts, in order. Each one is idempotent, so re-running any of them on a
+host that is already right changes nothing.
+
+```bash
+./deploy/host-setup.sh      # once per HOST   — swap, clamd, apache modules
+./deploy/provision.sh       # once per APP    — user, dirs, db, certs, vhosts
+./deploy/deploy.sh          # every time      — build and ship
+```
+
+`host-setup.sh` is deliberately separate. Everything in it belongs to the
+**machine**, not to CityConnect: clamd serves any application on the box that
+wants file scanning, and swap belongs to the host. Folding it into
+`provision.sh` would mean facility-booking needs its own copy of the same
+steps, and two scripts editing `/etc/clamav/clamd.conf` is the shared-host
+hazard the rest of this directory is careful to avoid.
+
+`provision.sh` **re-checks** all of it and warns — by name, with what will
+happen — rather than refusing. Skipping `host-setup.sh` does not fail; it
+produces a host that works until the first signature update or the first
+citizen attachment, and then does not.
+
+### What host-setup.sh does, and why
+
+All three were learned the hard way on muni-demo — a 2GB droplet already
+running C2, MySQL, parking, facility-booking and the audit service.
+
+| Step | Why |
+|---|---|
+| **2GB swapfile** (`SWAP_GB=` to change) | The box shipped with none. clamd holds ~960MB resident and MySQL ~490MB, which left **97MB available** with CityConnect not yet deployed. No swap means no margin: the first spike kills a process instead of paging. |
+| **`ConcurrentDatabaseReload no`** | ClamAV defaults it to **yes**, loading a *second* copy of the signature database during an update while the first still serves. freshclam checks **24 times a day**. On a box with 97MB free that is an hourly invitation to the OOM killer — whose biggest targets after clamd are **MySQL and C2**, so the blast radius is every other service on the host. |
+| **freshclam before clamd's first start** | A fresh install has no database, and `clamav-daemon` fails to start until one exists with an error that does not say so. Ordering it turns a puzzling failure into a wait. |
+| **Apache modules** | `proxy proxy_http headers rewrite ssl deflate`. `provision.sh` refuses without them; enabling here means a new host does not fail at the first vhost install. |
+
+It ends by printing memory and the top processes, because on a host this size
+that is the number worth looking at before going further.
+
+`--dry-run` prints the remote script without touching anything.
+`--skip-scanner` leaves clamd alone.
+
+**muni-demo is already in this state** — swap active and in `/etc/fstab`,
+`ConcurrentDatabaseReload no`, clamd answering PING on
+`/var/run/clamav/clamd.ctl`. Running the script there is a no-op.
 
 ## First time
 
@@ -197,11 +243,14 @@ a notice describing collection that does not happen is worse than no notice.
 
 - **Config is server state.** The env file is never overwritten by a deploy or a
   re-provision. Change it on the server and `systemctl restart cityconnect`.
-- **Two settings are unset and fail quietly.** `CC_SCANNER_ADDRESS` — with no
-  clamd every citizen attachment stays quarantined and is never served, while
-  the resident is told it arrived. `CC_SMTP_HOST` — email-bound messages queue
-  in the outbox for ever and a guest is never told their report was received.
-  Neither errors at boot. `docs/runbook.md` has the full table.
+- **`CC_SMTP_HOST` is unset and fails quietly.** Email-bound messages queue in
+  the outbox for ever and a guest is never told their report was received, with
+  nothing on screen to say so. `docs/runbook.md` has the full table of settings
+  that behave this way.
+- **The scanner is a unix socket**, `/var/run/clamav/clamd.ctl`, mode 0666 — so
+  the service account needs no group membership and `ProtectSystem=strict` does
+  not get in the way. `host-setup.sh` puts it there; `provision.sh` checks it
+  answers.
 - **Rollback:** each deploy keeps the previous API binary as
   `cityconnect.prev`. `mv cityconnect.prev cityconnect && systemctl restart cityconnect`.
 - **Logs:** `journalctl -u cityconnect -f`.

@@ -95,9 +95,66 @@ fi
 # unknown directive rather than ignoring it.
 for m in proxy_http headers rewrite ssl deflate; do
   remote "apache2ctl -M 2>/dev/null | grep -q ${m}_module" \
-    || die "apache module ${m} is not enabled: ssh $SERVER 'a2enmod ${m} && systemctl reload apache2'"
+    || die "apache module ${m} is not enabled. Run ./deploy/host-setup.sh, which
+enables every module these vhosts need, or by hand:
+    ssh $SERVER 'a2enmod ${m} && apache2ctl configtest && systemctl reload apache2'"
 done
 step "apache modules present: proxy_http headers rewrite ssl deflate"
+
+# ---------------------------------------------------------------------------
+# Host preconditions — warn, do not refuse
+# ---------------------------------------------------------------------------
+# All of these are deploy/host-setup.sh's job. They are re-checked here because
+# skipping that script does not fail: it produces a host that works until the
+# first signature update or the first citizen attachment, and then does not.
+# None of them is a reason to refuse to provision, so each one says what will
+# happen rather than stopping.
+host_warnings=0
+
+if [[ -z "$(remote "swapon --show --noheadings 2>/dev/null" || true)" ]]; then
+  warn "No swap on $SERVER.
+    clamd holds ~960MB resident and MySQL another ~490MB; a host with no swap
+    has no margin, and the first spike kills a process rather than paging.
+    Fix: ./deploy/host-setup.sh"
+  host_warnings=$((host_warnings + 1))
+fi
+
+avail_mb="$(remote "free -m | awk '/^Mem:/ {print \$7}'" 2>/dev/null || echo 0)"
+if [[ "$avail_mb" =~ ^[0-9]+$ ]] && (( avail_mb < 300 )); then
+  warn "Only ${avail_mb}MB available on $SERVER, and CityConnect is not running yet.
+    This host is shared — the OOM killer's biggest targets are clamd, MySQL and
+    C2, so the service that dies may not be ours."
+  host_warnings=$((host_warnings + 1))
+fi
+
+if remote "command -v clamdscan >/dev/null 2>&1"; then
+  if ! remote "clamdscan --ping 1 >/dev/null 2>&1"; then
+    warn "clamd is installed on $SERVER but not answering.
+    Every citizen attachment will stay quarantined and never be served, while
+    the resident is told it arrived. Nothing errors at boot.
+    Check: ssh $SERVER 'journalctl -u clamav-daemon -n 30'"
+    host_warnings=$((host_warnings + 1))
+  elif ! remote "grep -qiE '^[[:space:]]*ConcurrentDatabaseReload[[:space:]]+no' /etc/clamav/clamd.conf 2>/dev/null"; then
+    warn "clamd answers, but ConcurrentDatabaseReload is not 'no' on $SERVER.
+    The default loads a SECOND copy of the signature database on every update,
+    and freshclam checks 24 times a day.
+    Fix: ./deploy/host-setup.sh"
+    host_warnings=$((host_warnings + 1))
+  else
+    step "clamd answering, ConcurrentDatabaseReload no"
+  fi
+else
+  warn "No malware scanner on $SERVER.
+    CC_SCANNER_ADDRESS points at clamd's socket; without it every citizen
+    attachment stays quarantined and is never served.
+    Fix: ./deploy/host-setup.sh"
+  host_warnings=$((host_warnings + 1))
+fi
+
+if (( host_warnings > 0 )); then
+  warn "$host_warnings host precondition(s) unmet. Provisioning continues — none of
+    these stops CityConnect starting, and all of them are fixable afterwards."
+fi
 
 remote "command -v mysql >/dev/null"   || die "mysql client not found on $SERVER"
 remote "command -v certbot >/dev/null" || die "certbot not found on $SERVER"
@@ -372,10 +429,8 @@ cat <<EOF
 
 Next:
   1. ./deploy/deploy.sh          ship the API, ccadm and both SPAs
-  2. Confirm clamd is reachable, or every citizen attachment stays quarantined
-     and is never served:
-       ssh $SERVER 'clamdscan --ping 1'
-     CC_SCANNER_ADDRESS already points at /var/run/clamav/clamd.ctl.
+  2. If any host precondition warned above, run ./deploy/host-setup.sh — it is
+     idempotent and fixes swap, clamd and the Apache modules in one pass.
   3. Set CC_SMTP_HOST once this box has a relay, or guests are never told
      their report was received.
 
