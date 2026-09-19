@@ -1,0 +1,114 @@
+# Rendered from deploy/apache/cityconnect-admin.conf.tmpl.
+# Do not edit the rendered copy; it is overwritten on the next deploy.
+#
+# The STAFF CONSOLE, on its own hostname.
+#
+# Serves the console SPA at the root of this host and proxies the same API the
+# portal vhost proxies. Nothing about C2 is published here: C2 talks only to
+# the portal origin, and an inbound endpoint exposed twice is a second place to
+# get the authorisation wrong.
+#
+# Unlike the portal vhost this does NOT default-deny /api, because the console
+# legitimately uses the whole staff surface. The API's own session and
+# permission checks are what protect it; this host simply must not be the
+# public one, which is why it is a separate name.
+#
+# Requires: a2enmod proxy proxy_http headers rewrite deflate ssl
+<VirtualHost *:80>
+    ServerName @@DOMAIN@@
+    <Location "/.well-known/acme-challenge">
+        Require all granted
+    </Location>
+    RedirectMatch permanent ^(?!/\.well-known/acme-challenge)(.*)$ https://@@DOMAIN@@$1
+</VirtualHost>
+
+<VirtualHost *:443>
+    ServerName @@DOMAIN@@
+    DocumentRoot @@APP_DIR@@/console
+
+    SSLEngine on
+    SSLCertificateFile    /etc/letsencrypt/live/@@DOMAIN@@/fullchain.pem
+    SSLCertificateKeyFile /etc/letsencrypt/live/@@DOMAIN@@/privkey.pem
+    SSLProtocol           -all +TLSv1.2 +TLSv1.3
+    SSLHonorCipherOrder   off
+
+    # --- API --------------------------------------------------------------
+    # Longer timeout than the portal's: report exports and the audit
+    # verification walk are staff operations that legitimately take a while.
+    ProxyPass        /api  http://127.0.0.1:@@PORT@@/api  connectiontimeout=5 timeout=120 retry=0
+    ProxyPassReverse /api  http://127.0.0.1:@@PORT@@/api
+
+    <Location /api>
+        RequestHeader set X-Forwarded-Proto "https"
+        ProxyPreserveHost On
+        Header always set Cache-Control "no-store"
+    </Location>
+
+    # C2 has no business on this origin. The portal host publishes these; if
+    # they answered here too, this host would have to be reachable from the
+    # internet for them to be any use — and the whole point of a separate name
+    # is that it does not have to be.
+    <Location /api/citizens>
+        Require all denied
+    </Location>
+    <Location /api/c2>
+        Require all denied
+    </Location>
+
+    ProxyPass        /healthz  http://127.0.0.1:@@PORT@@/healthz
+    ProxyPassReverse /healthz  http://127.0.0.1:@@PORT@@/healthz
+    ProxyPass        /readyz   http://127.0.0.1:@@PORT@@/readyz
+    ProxyPassReverse /readyz   http://127.0.0.1:@@PORT@@/readyz
+
+    # Metrics are for the monitoring system, not the internet. Loopback only
+    # on this box; widen deliberately if something ever scrapes it remotely.
+    <Location /metrics>
+        ProxyPass  http://127.0.0.1:@@PORT@@/metrics
+        Require ip 127.0.0.1
+    </Location>
+
+    # --- SPA --------------------------------------------------------------
+    <Directory "@@APP_DIR@@/console">
+        Options -Indexes -MultiViews
+        AllowOverride None
+        Require all granted
+
+        RewriteEngine On
+        RewriteBase /
+        RewriteCond %{REQUEST_URI} !^/api
+        RewriteCond %{REQUEST_FILENAME} !-f
+        RewriteCond %{REQUEST_FILENAME} !-d
+        RewriteRule . /index.html [L]
+
+        <FilesMatch "\.(js|css|woff2?|png|jpg|svg|webp)$">
+            Header set Cache-Control "public, max-age=31536000, immutable"
+        </FilesMatch>
+        <FilesMatch "index\.html$">
+            Header set Cache-Control "no-cache, must-revalidate"
+        </FilesMatch>
+
+        AddOutputFilterByType DEFLATE text/html text/css application/javascript application/json image/svg+xml
+    </Directory>
+
+    # --- Security headers -------------------------------------------------
+    Header always set X-Content-Type-Options "nosniff"
+    Header always set X-Frame-Options "DENY"
+    Header always set Referrer-Policy "same-origin"
+    Header always set Strict-Transport-Security "max-age=31536000; includeSubDomains"
+    Header always set Cross-Origin-Opener-Policy "same-origin"
+    Header always set Permissions-Policy "geolocation=(), camera=(), microphone=(), payment=()"
+
+    Header always set Content-Security-Policy "default-src 'self'; \
+        script-src 'self'; \
+        style-src 'self' 'unsafe-inline'; \
+        img-src 'self' data:; \
+        font-src 'self'; \
+        connect-src 'self'; \
+        frame-ancestors 'none'; \
+        form-action 'self'; \
+        base-uri 'self'; \
+        object-src 'none'"
+
+    ErrorLog  ${APACHE_LOG_DIR}/@@SERVICE@@-admin_error.log
+    CustomLog ${APACHE_LOG_DIR}/@@SERVICE@@-admin_access.log combined
+</VirtualHost>

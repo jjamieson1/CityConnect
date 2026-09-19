@@ -1,0 +1,50 @@
+# Rendered from deploy/systemd/cityconnect.service.tmpl.
+# Do not edit the rendered copy; it is overwritten on the next deploy.
+[Unit]
+Description=CityConnect service request API
+# Order after the database, or the service starts before MySQL accepts
+# connections on boot and crash-loops until Restart happens to catch it.
+After=network.target mysql.service
+Wants=mysql.service
+
+[Service]
+Type=simple
+User=@@USER@@
+Group=@@USER@@
+WorkingDirectory=@@APP_DIR@@
+# All configuration and secrets come from this file (chmod 600, owned by the
+# service account). Nothing is passed on the command line, where ps sees it.
+EnvironmentFile=@@APP_DIR@@/@@SERVICE@@.env
+ExecStart=@@APP_DIR@@/@@SERVICE@@
+Restart=on-failure
+RestartSec=3
+
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+
+# ProtectSystem=strict makes the whole filesystem read-only except these paths.
+#
+# data/ is the only one the service writes. It holds citizen-uploaded
+# attachments, including the quarantine directory an upload lands in before
+# clamd has judged it — which is why the tree lives here, outside every web
+# root, and is served back through the app rather than by Apache. A file that
+# fails or skips scanning is never promoted out of quarantine, and Apache has
+# no path to it either way.
+#
+# keys/ is deliberately absent: the C2 client signing key is read at start-up
+# and must never be rewritten by the process that uses it.
+ReadWritePaths=@@APP_DIR@@/data
+
+[Install]
+WantedBy=multi-user.target

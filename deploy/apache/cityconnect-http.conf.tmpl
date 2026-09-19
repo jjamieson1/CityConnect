@@ -1,0 +1,21 @@
+# Rendered from deploy/apache/cityconnect-http.conf.tmpl.
+# Do not edit the rendered copy; it is overwritten on the next provision.
+#
+# Bootstrap vhost, used once per hostname. certbot's HTTP-01 challenge needs a
+# working HTTP vhost, but the real vhost needs a certificate that does not
+# exist yet. This serves the ACME challenge and refuses everything else, so the
+# hostname never briefly answers with someone else's content; provision.sh
+# replaces it with the TLS vhost as soon as certbot succeeds.
+<VirtualHost *:80>
+    ServerName @@DOMAIN@@
+
+    DocumentRoot /var/www/html
+    <Location "/.well-known/acme-challenge">
+        Require all granted
+    </Location>
+
+    RedirectMatch 404 ^(?!/\.well-known/acme-challenge).*$
+
+    ErrorLog  ${APACHE_LOG_DIR}/@@SERVICE@@-bootstrap_error.log
+    CustomLog ${APACHE_LOG_DIR}/@@SERVICE@@-bootstrap_access.log combined
+</VirtualHost>
