@@ -230,6 +230,51 @@ pointed at a key:
 Between those two steps every notification is rejected. Do them together. The
 key is already generated and waiting at `/app/cityconnect/keys/client-signing.pem`.
 
+### Mail: two paths, one provider
+
+C2's messaging API is addressed by **subject id** — `404` on an unknown one,
+`403` without active consent. You never hand it an email address. So it cannot
+carry a guest, and CityConnect's two transports are not interchangeable:
+
+| Recipient | Transport | Delivery |
+|---|---|---|
+| C2 account + active consent | `TransportC2` → partner API | C2's own Resend integration |
+| Guest / anonymous who left an address | `TransportEmail` → SMTP | Resend, direct from the app |
+
+The second row is most of the demo, since the whole Sprint 1 front door is
+built for people who never make an account. Pointing it at Resend's own SMTP
+interface means both paths leave the same provider on the same verified domain.
+
+```
+CC_SMTP_HOST=smtp.resend.com
+CC_SMTP_PORT=587
+CC_SMTP_STARTTLS=true
+CC_SMTP_USERNAME=resend        # the literal string
+CC_SMTP_PASSWORD=re_…          # a Resend API key, passed as CC_SMTP_PASSWORD to provision.sh
+CC_SMTP_FROM=jamie@dev-pro.app
+```
+
+**Resend verification is exact, and getting it wrong is silent.** `dev-pro.app`
+is verified; `cityconnect.dev-pro.app` is **not**, so the sender is deliberately
+not derived from the portal hostname. Resend refuses an unverified sender with a
+5xx, `internal/mailer` classifies that as permanent, and the recipient is
+suppressed as `bounced` and never retried — one bad value quietly poisons every
+guest address it touches instead of erroring once.
+
+After the first guest submission:
+
+```bash
+ssh muni-demo 'journalctl -u cityconnect | grep -i "bounce\|suppress"'
+```
+
+`CC_SMTP_PASSWORD` is optional at provision time. Without it `CC_SMTP_HOST`
+renders empty, which is the app's documented inert state — messages queue in
+the outbox. A host with no credentials would instead fail at AUTH on every
+send, which looks like a broken relay rather than one nobody configured.
+
+Replies to `jamie@dev-pro.app` go to a mailbox, not onto the request:
+CityConnect does not ingest inbound mail. Residents reply through the portal.
+
 ### Payments
 
 The application is **registered** as billing-capable — that is all three of the
@@ -243,10 +288,10 @@ a notice describing collection that does not happen is worse than no notice.
 
 - **Config is server state.** The env file is never overwritten by a deploy or a
   re-provision. Change it on the server and `systemctl restart cityconnect`.
-- **`CC_SMTP_HOST` is unset and fails quietly.** Email-bound messages queue in
-  the outbox for ever and a guest is never told their report was received, with
-  nothing on screen to say so. `docs/runbook.md` has the full table of settings
-  that behave this way.
+- **Guest email needs `CC_SMTP_PASSWORD` at provision time.** Without it the
+  relay is left off and messages queue in the outbox for ever, with nothing on
+  screen to say so. `docs/runbook.md` has the full table of settings that fail
+  this quietly.
 - **The scanner is a unix socket**, `/var/run/clamav/clamd.ctl`, mode 0666 — so
   the service account needs no group membership and `ProtectSystem=strict` does
   not get in the way. `host-setup.sh` puts it there; `provision.sh` checks it

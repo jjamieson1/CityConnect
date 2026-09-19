@@ -14,7 +14,7 @@
 #
 # Usage:
 #   CC_C2_CLIENT_ID=c2f_... CC_C2_CLIENT_SECRET=... CC_BOOTSTRAP_ADMIN_SUBS=... \
-#     ./deploy/provision.sh
+#     CC_SMTP_PASSWORD=re_... ./deploy/provision.sh
 #   ./deploy/provision.sh --dry-run     # print the remote script, change nothing
 #   ./deploy/provision.sh --skip-tls    # stop before certbot; print the commands
 #
@@ -43,6 +43,14 @@ PORT="${PORT:-8095}"                    # 8090 audit, 8092 c2-api, 8093 parking,
 DB_NAME="${DB_NAME:-cityconnect}"
 DB_USER="${DB_USER:-cityconnect_app}"
 C2_ORIGIN="${C2_ORIGIN:-https://muni-demo.dev-pro.app/c2}"
+
+# Guest and anonymous notifications leave through Resend's SMTP interface, so
+# both mail paths use the same provider and the same verified domain. The
+# address must be on a domain verified in Resend, and verification is EXACT:
+# dev-pro.app is verified, cityconnect.dev-pro.app is not.
+MAIL_FROM="${MAIL_FROM:-jamie@dev-pro.app}"
+SMTP_RELAY="${SMTP_RELAY:-smtp.resend.com}"
+
 CERT_EMAIL="${CERT_EMAIL:-jamie@celestialtech.ca}"
 ACME_WEBROOT="${ACME_WEBROOT:-/var/www/html}"
 
@@ -210,6 +218,21 @@ if [[ "$env_exists" -eq 0 ]]; then
   : "${CC_C2_CLIENT_SECRET:?set CC_C2_CLIENT_SECRET (shown once when the client was created)}"
   : "${CC_BOOTSTRAP_ADMIN_SUBS:?set CC_BOOTSTRAP_ADMIN_SUBS (your C2 subject id) or nobody can sign in as an administrator}"
 
+  # The Resend API key is optional. Without it CC_SMTP_HOST renders empty,
+  # which is the app's documented inert state — messages queue in the outbox
+  # rather than erroring. The alternative, a host with no credentials, would
+  # have every send rejected at AUTH instead, which is worse: it looks like a
+  # broken relay rather than one that was never configured.
+  smtp_host=""
+  if [[ -n "${CC_SMTP_PASSWORD:-}" ]]; then
+    smtp_host="$SMTP_RELAY"
+  else
+    warn "CC_SMTP_PASSWORD is not set, so guest email is left switched off.
+    A guest or anonymous reporter who leaves an address will never be told
+    their report was received, and nothing will say so on screen. Set it to a
+    Resend API key and re-run, or edit the env file on the server afterwards."
+  fi
+
   DB_PASSWORD="$(secret 24)"
   CLIENT_KID="cityconnect-$(date +%Y-%m)"
   render_template "$HERE/cityconnect.env.tmpl" "$STAGE/$SERVICE.env" \
@@ -219,6 +242,8 @@ if [[ "$env_exists" -eq 0 ]]; then
     C2_ORIGIN="$C2_ORIGIN" \
     C2_CLIENT_ID="$CC_C2_CLIENT_ID" C2_CLIENT_SECRET="$CC_C2_CLIENT_SECRET" \
     CLIENT_KID="$CLIENT_KID" \
+    SMTP_HOST="$smtp_host" SMTP_PASSWORD="${CC_SMTP_PASSWORD:-}" \
+    MAIL_FROM="$MAIL_FROM" \
     FORM_TOKEN_SECRET="$(secret 32)" \
     BOOTSTRAP_ADMIN_SUBS="$CC_BOOTSTRAP_ADMIN_SUBS"
   chmod 600 "$STAGE/$SERVICE.env"
@@ -431,8 +456,13 @@ Next:
   1. ./deploy/deploy.sh          ship the API, ccadm and both SPAs
   2. If any host precondition warned above, run ./deploy/host-setup.sh — it is
      idempotent and fixes swap, clamd and the Apache modules in one pass.
-  3. Set CC_SMTP_HOST once this box has a relay, or guests are never told
-     their report was received.
+  3. After the first guest submission, check nothing was silently suppressed —
+     an unverified Resend sender is a permanent 5xx, which suppresses the
+     address rather than retrying it:
+       ssh $SERVER 'journalctl -u $SERVICE | grep -i "bounce\|suppress"'
+
+Mail leaves as $MAIL_FROM. C2 delivers to consented citizens itself; this
+relay is only for guests and anonymous reporters, whom C2 cannot address.
 
 Config lives at $APP_DIR/$SERVICE.env and is never touched by a deploy.
 EOF
