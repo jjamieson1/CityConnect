@@ -17,6 +17,22 @@
 #   ./deploy/host-setup.sh --dry-run       # print the remote script, change nothing
 #   SWAP_GB=4 ./deploy/host-setup.sh       # larger swapfile
 #   ./deploy/host-setup.sh --skip-scanner  # leave clamd alone
+#   ./deploy/host-setup.sh --minimal-signatures   # see below
+#   ./deploy/host-setup.sh --full-signatures      # undo it
+#
+# SIGNATURE SET. clamd holds its whole database resident: ~960MB for the full
+# set, measured on muni-demo, on a host with 1.9GB. --minimal-signatures
+# replaces it with a database containing one signature — EICAR, the standard
+# antivirus test file — which costs about 22MB.
+#
+# THAT IS NOT MALWARE PROTECTION. It detects exactly one thing, and that thing
+# is a test file. What it preserves is the PIPELINE: an upload still lands in
+# quarantine, is still streamed to clamd, is still promoted only on a clean
+# verdict, and an EICAR upload is still rejected. On a demo box that is the
+# trade — the machinery is real and demonstrable, the signature set is not.
+# Never do this anywhere a real citizen uploads a real file.
+#
+# --full-signatures puts it back.
 #
 # WHY EACH STEP EXISTS — all three were learned on muni-demo, which is a 2GB
 # droplet shared by C2, MySQL, parking, facility-booking and the audit service:
@@ -50,14 +66,22 @@ SWAPFILE="${SWAPFILE:-/swapfile}"
 
 DRY_RUN=0
 SKIP_SCANNER=0
+SIG_MODE=""
 for arg in "$@"; do
   case "$arg" in
-    --dry-run)       DRY_RUN=1 ;;
-    --skip-scanner)  SKIP_SCANNER=1 ;;
-    -h|--help)       grep '^#' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    --dry-run)             DRY_RUN=1 ;;
+    --skip-scanner)        SKIP_SCANNER=1 ;;
+    --minimal-signatures)  SIG_MODE=minimal ;;
+    --full-signatures)     SIG_MODE=full ;;
+    -h|--help)             grep '^#' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) die "unknown option: $arg" ;;
   esac
 done
+
+if [[ -n "$SIG_MODE" && "$SKIP_SCANNER" -eq 1 ]]; then
+  die "--skip-scanner and --${SIG_MODE}-signatures contradict each other:
+one says leave clamd alone, the other says change which database it loads."
+fi
 
 require_cmd ssh
 
@@ -83,6 +107,11 @@ set -euo pipefail
 SWAP_GB='$SWAP_GB'
 SWAPFILE='$SWAPFILE'
 SKIP_SCANNER='$SKIP_SCANNER'
+SIG_MODE='$SIG_MODE'
+# EICAR, the standard antivirus test file, as a body signature matching
+# anywhere in a file of any type. 68 bytes:
+#   X5O!P%@AP[4\\PZX54(P^)7CC)7}\$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!\$H+H*
+EICAR_HEX='58354f2150254041505b345c505a58353428505e2937434329377d2445494341522d5354414e444152442d414e544956495255532d544553542d46494c452124482b482a'
 
 say()  { printf '    %s\n' "\$*"; }
 warn() { printf '!!  %s\n' "\$*" >&2; }
@@ -178,6 +207,153 @@ else
     [ "\$i" = "10" ] && warn "clamd is not answering: journalctl -u clamav-daemon -n 30"
     sleep 3
   done
+fi
+
+# ---------------------------------------------------------------------------
+# 2b. Signature set
+# ---------------------------------------------------------------------------
+# Only when asked. Left alone, clamd keeps whatever database it already has.
+#
+# The database stays at /var/lib/clamav and the big files are moved OUT of it,
+# rather than pointing clamd at a new directory. AppArmor confines clamd to
+# exactly this path:
+#
+#     /var/lib/clamav/   r,
+#     /var/lib/clamav/** krw,
+#
+# so a DatabaseDirectory anywhere else is denied at open() — clamd logs
+# "Can't open directory", fails to start, and systemd gives up after five
+# tries. The directory's own ownership and mode look perfectly correct while
+# this happens, which makes it a genuinely confusing half hour.
+if [ -n "\$SIG_MODE" ]; then
+  db=/var/lib/clamav
+  stash=/var/lib/clamav-full
+
+  # Ubuntu's unit carries two of these:
+  #     ConditionPathExistsGlob=/var/lib/clamav/main.{c[vl]d,inc}
+  #     ConditionPathExistsGlob=/var/lib/clamav/daily.{c[vl]d,inc}
+  # Move either file and systemd SKIPS the service — not a failure, a skip,
+  # logged as "unmet condition check", leaving systemctl is-active saying
+  # inactive with nothing that looks like an error. A drop-in resets them and
+  # requires our own database instead.
+  dropin=/etc/systemd/system/clamav-daemon.service.d
+  if [ "\$SIG_MODE" = "minimal" ]; then
+    mkdir -p "\$dropin"
+    printf '%s\\n' \\
+      '# Written by deploy/host-setup.sh --minimal-signatures.' \\
+      '# The stock unit refuses to start without main.* and daily.*, which is' \\
+      '# exactly what this mode removes. An empty assignment resets the list.' \\
+      '[Unit]' \\
+      'ConditionPathExistsGlob=' \\
+      'ConditionPathExistsGlob=/var/lib/clamav/eicar.ndb' \\
+      > "\$dropin/minimal-signatures.conf"
+    systemctl daemon-reload
+    say "drop-in installed: unit now requires eicar.ndb instead of main/daily"
+
+    mkdir -p "\$stash"
+    moved=0
+    for f in "\$db"/*.cvd "\$db"/*.cld; do
+      [ -e "\$f" ] || continue
+      mv "\$f" "\$stash"/
+      moved=\$((moved + 1))
+    done
+    printf 'Eicar-Test-Signature:0:*:%s\\n' "\$EICAR_HEX" > "\$db/eicar.ndb"
+    chown clamav:clamav "\$db/eicar.ndb"
+    chmod 644 "\$db/eicar.ndb"
+    say "moved \$moved signature file(s) to \$stash and wrote a one-signature database"
+
+    # freshclam downloads into \$db. Left running it would put the full set
+    # back within the hour and quietly undo this.
+    systemctl disable --now clamav-freshclam >/dev/null 2>&1 || true
+    say "freshclam stopped: it would re-download what we just moved"
+  else
+    rm -f "\$dropin/minimal-signatures.conf"
+    rmdir "\$dropin" 2>/dev/null || true
+    systemctl daemon-reload
+    say "drop-in removed: the stock start conditions are back"
+
+    rm -f "\$db/eicar.ndb"
+    restored=0
+    if [ -d "\$stash" ]; then
+      for f in "\$stash"/*.cvd "\$stash"/*.cld; do
+        [ -e "\$f" ] || continue
+        mv "\$f" "\$db"/
+        restored=\$((restored + 1))
+      done
+      rmdir "\$stash" 2>/dev/null || true
+    fi
+    chown -R clamav:clamav "\$db"
+    say "restored \$restored signature file(s) to \$db"
+
+    if [ ! -s "\$db/main.cvd" ] && [ ! -s "\$db/main.cld" ]; then
+      say "nothing to restore — downloading the full set (several minutes)"
+      systemctl stop clamav-freshclam >/dev/null 2>&1 || true
+      freshclam --quiet || warn "freshclam failed; clamd will not start"
+    fi
+    systemctl enable --now clamav-freshclam >/dev/null 2>&1 || true
+    say "freshclam started"
+  fi
+
+  # Set explicitly to the one path AppArmor allows, in case an earlier run or
+  # a hand edit pointed it somewhere clamd cannot reach.
+  conf=/etc/clamav/clamd.conf
+  if grep -qE '^[[:space:]]*DatabaseDirectory' "\$conf"; then
+    sed -i "s|^[[:space:]]*DatabaseDirectory.*|DatabaseDirectory \$db|" "\$conf"
+  else
+    printf '\\nDatabaseDirectory %s\\n' "\$db" >> "\$conf"
+  fi
+
+  systemctl restart clamav-daemon
+
+  ok=0
+  for i in 1 2 3 4 5 6 7 8 9 10; do
+    if clamdscan --ping 1 >/dev/null 2>&1; then ok=1; break; fi
+    sleep 3
+  done
+  if [ "\$ok" != "1" ]; then
+    echo "clamd did not come back: journalctl -u clamav-daemon -n 30" >&2
+    echo "Restore with: ./deploy/host-setup.sh --full-signatures" >&2
+    exit 1
+  fi
+
+  # Prove the VERDICTS, not just that the process answers. A database that
+  # failed to load would leave clamd running and clearing every file, which is
+  # the most dangerous way this could go wrong.
+  #
+  # Output is captured and then matched, never piped into grep: clamdscan
+  # exits 1 when it FINDS something, and under "set -o pipefail" that makes
+  # a "clamdscan | grep -q FOUND" pipeline fail on exactly the case it is
+  # testing for. That reported a working scanner as broken.
+  tmp="\$(mktemp -d)"
+  printf '%s' "\$EICAR_HEX" | xxd -r -p > "\$tmp/eicar"
+  printf 'an ordinary file\\n' > "\$tmp/clean"
+
+  eicar_out="\$(clamdscan --fdpass --no-summary "\$tmp/eicar" 2>&1 || true)"
+  clean_out="\$(clamdscan --fdpass --no-summary "\$tmp/clean" 2>&1 || true)"
+  rm -rf "\$tmp"
+
+  case "\$eicar_out" in
+    *FOUND*) : ;;
+    *) echo "clamd is running but did NOT detect EICAR — the database did not load." >&2
+       echo "  clamdscan said: \$eicar_out" >&2
+       echo "Every upload would be cleared. Restore with:" >&2
+       echo "    ./deploy/host-setup.sh --full-signatures" >&2
+       exit 1 ;;
+  esac
+  case "\$clean_out" in
+    *FOUND*) echo "clamd flagged a clean file — the database is wrong: \$clean_out" >&2
+             exit 1 ;;
+  esac
+
+  say "verified: EICAR detected, clean file passed"
+  rss_kb="\$(ps -o rss= -C clamd 2>/dev/null | head -1 | tr -d ' ')"
+  [ -n "\$rss_kb" ] && say "clamd resident: \$((rss_kb / 1024)) MB"
+
+  if [ "\$SIG_MODE" = "minimal" ]; then
+    warn "This host now detects EICAR AND NOTHING ELSE. The quarantine pipeline
+    is real and demonstrable; the signature set is not protection. Do not point
+    real citizens at it. Undo with --full-signatures."
+  fi
 fi
 
 # ---------------------------------------------------------------------------

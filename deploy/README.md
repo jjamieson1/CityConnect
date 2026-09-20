@@ -100,6 +100,51 @@ running C2, MySQL, parking, facility-booking and the audit service.
 It ends by printing memory and the top processes, because on a host this size
 that is the number worth looking at before going further.
 
+### Signature set: `--minimal-signatures`
+
+clamd holds its whole database resident — **972 MB measured** on this 1.9 GB
+box, more than half the machine. `--minimal-signatures` replaces it with a
+database containing one signature, EICAR, at **23 MB**. That is **~940 MB
+back**, and it is reversible with `--full-signatures`.
+
+| | clamd resident | Memory available |
+|---|---|---|
+| Full signature set | 972 MB | 370 MB |
+| EICAR only | **23 MB** | **1307 MB** |
+
+**This is not malware protection.** It detects exactly one thing, and that
+thing is a test file. What it preserves is the **pipeline**: an upload still
+lands in quarantine, is still streamed to clamd, is still promoted only on a
+clean verdict, and an EICAR upload is still rejected. On a demo box that is the
+trade — the machinery is real and demonstrable, the signature set is not.
+**Never do this anywhere a real citizen uploads a real file**, and do not let
+the response pack imply otherwise: G·1-025 is rated Have on the pipeline, which
+is true, and says nothing about how many signatures a particular host carries.
+
+Two packaging guards have to be worked with rather than around, and neither
+announces itself:
+
+- **AppArmor** confines clamd to `/var/lib/clamav/**`. Point `DatabaseDirectory`
+  anywhere else and clamd logs `Can't open directory`, fails to start, and
+  systemd gives up after five tries — while the directory's own ownership and
+  mode look perfectly correct. So the small database goes in the normal place
+  and the big files move out.
+- **systemd** carries two `ConditionPathExistsGlob` lines requiring `main.*`
+  **and** `daily.*`. Move either and the unit is *skipped* — not failed,
+  skipped, logged as "unmet condition check" with `is-active` reporting
+  `inactive` and nothing resembling an error. A drop-in at
+  `/etc/systemd/system/clamav-daemon.service.d/minimal-signatures.conf` resets
+  the list and requires `eicar.ndb` instead. `--full-signatures` removes it.
+
+freshclam is stopped in this mode, because it would re-download the full set
+within the hour and quietly undo it. `--full-signatures` starts it again.
+
+The script **verifies the verdicts** rather than trusting that the process came
+back: it scans an EICAR sample and a clean file, and refuses to finish unless
+the first is detected and the second is not. A database that failed to load
+leaves clamd running and clearing every file, which is the most dangerous way
+this could go wrong.
+
 `--dry-run` prints the remote script without touching anything.
 `--skip-scanner` leaves clamd alone.
 
